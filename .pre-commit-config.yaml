@@ -79,4 +79,5 @@ repos:
         exclude: |
           (?ix)^(
             LICENSES/.*
+            |dumps/.*\.out.txt
           )$

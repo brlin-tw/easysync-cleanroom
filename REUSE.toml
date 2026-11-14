@@ -14,7 +14,15 @@ version = 1
 path = [
     "**/AGENTS.md",
     "*.README.md",
-    "**/README.md"
+    "**/README.md",
+    "specs/*.md",
 ]
 SPDX-FileCopyrightText = '2026 林博仁(Buo-ren Lin) <buo.ren.lin@gmail.com>'
 SPDX-License-Identifier = 'CC-BY-SA-4.0+'
+
+[[annotations]]
+path = [
+    "dumps/*.out.txt"
+]
+SPDX-FileCopyrightText = '1900 Program output data(PD) <https://en.wikipedia.org/wiki/Public_domain>'
+SPDX-License-Identifier = 'CC0-1.0'

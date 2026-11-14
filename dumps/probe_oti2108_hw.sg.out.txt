@@ -1,0 +1,39 @@
+{
+  "identify_0xF0": {
+    "raw_hex": "000021080003303330373239",
+    "is_oti2108": true,
+    "chip_bcd": "2108",
+    "firmware_rev": 3,
+    "extended_cap_flag": 1
+  },
+  "status_op1_buffer_size": {
+    "raw_hex": "0004210800033033",
+    "size_code": 0,
+    "buffer_size_bytes": 262144,
+    "buffer_size_kb": 256
+  },
+  "status_op2_usb_speed": {
+    "raw_hex": "2000210800033033",
+    "local_usb20_flag": true,
+    "speed_description": "USB 2.0 High-Speed (480 Mbps)",
+    "ndis_link_speed_100bps": 4800000
+  },
+  "status_op3_poll_state": {
+    "raw_hex": "0100000000000033",
+    "action_code": 1,
+    "action_description": "Idle / Link OK (1)",
+    "remote_queued_blocks": 0,
+    "virtual_disk_lba": 0,
+    "virtual_disk_sector_count": 51
+  },
+  "status_op5_peer_mode": {
+    "raw_hex": "007f000000000033",
+    "peer_mode_u16": "0x007F",
+    "peer_mode_description": "Transfer Line Mode (EasySuite.exe file sync active)"
+  },
+  "flash_config_0xDB_0x0022": {
+    "has_otiming_signature": false,
+    "signature_bytes": "\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+    "custom_buffer_size_bytes": null
+  }
+}
