@@ -51,7 +51,7 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 | | `&Delete` | `32776` | Delete selected files/folders (`DeleteFile` / `0x03` / `0x04`) |
 | | `&Rename` | `32778` | Rename selected file/folder (`MoveFile` / `0x07` / `0x08`) |
 | | `&New Folder` | `32777` | Open Dialog `134` and create directory (`CreateDirectory` / `0x06`) |
-| | `E&xit` | `32788` | Send `<OTIMSG>DISCONNECT</OTIMSG>` (`0x16`), reset bridge (`cmd=5, val=0`), and quit |
+| | `E&xit` | `32788` | Reset bridge to idle mode (`cmd=5, val=0`), stop worker threads, and quit |
 | **`&Edit`** | `&Copy` | `57634` | Copy selected items in active pane to clipboard / transfer selection |
 | | `&Paste` | `57637` | Paste / initiate transfer from opposite pane (`0x09`/`0x0A`/`0x0B`/`0x0C`) |
 | | `Select &All` | `32771` | Select all items in active file list |
@@ -100,7 +100,7 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 2. Start the hardware discovery and poll worker threads (`0x0041A480`).
 3. Populate the **Local Host** pane immediately using native OS filesystem APIs (`GetLogicalDriveStrings`, `FindFirstFile`, `GetDiskFreeSpaceEx`).
 4. While the remote peer is disconnected (`op_type=5` returns `0x0000`), display `"Disconnected"` (`0xF027`) in the status bar and disable remote file operations.
-5. As soon as `op_type=5` returns `0x007F`, exchange `<OTIMSG><MSG_TYPE>COMMAND</MSG_TYPE><COMMAND>CONNECT</COMMAND>...</OTIMSG>` (`0x16`), transition status bar to `"Connected"` (`0xF026`), and automatically issue Client Command `0x01` (**Query Peer Root / Drives**) to populate the **Remote Host** pane.
+5. As soon as `op_type=5` returns `0x007F`, both hosts immediately transition to the connected state without exchanging an XML handshake, update status bar to `"Connected"` (`0xF026`), and automatically issue Client Command `0x01` (**Query Peer Root / Drives**) using the 5-byte payload `[0x01][flags:u8][param:u16_le][path_len=0:u8]` to populate the **Remote Host** pane.
 
 ### 4.2 Single File Upload (`Local -> Remote`)
 1. **Free Space Check:** Query cached volume free space (or send `0x0E` **Query Drive Space**). If `file_size > remote_free_bytes`, abort and display `"Disk is full"` (`0xF038`).
@@ -149,4 +149,4 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 | `0x0412` | Korean (Korea) | CP949 (EUC-KR) |
 
 > [!TIP]
-> **Cross-Platform Path Encoding Note:** Legacy `EasySuite.exe` transmits file paths in the active Windows ANSI/MBCS code page (`CP_ACP`) inside `WIN32_FIND_DATAA` and command payloads. A clean-room implementation should default to UTF-8 when talking to another clean-room peer (negotiated via `<OTIMSG>` `<SYSTEM_INFO>`) while supporting configurable MBCS encoding (e.g., CP950, CP936, CP932, CP1252) when interoperating with legacy Windows `EasySuite.exe`.
+> **Cross-Platform Path Encoding Note:** Legacy `EasySuite.exe` transmits file paths in the active Windows ANSI/MBCS code page (`CP_ACP`) inside `WIN32_FIND_DATAA` and command payloads. A clean-room implementation should default to UTF-8 when talking to modern clean-room peers while supporting configurable MBCS encoding (e.g., CP950, CP936, CP932, CP1252) when interoperating with legacy Windows `EasySuite.exe`.

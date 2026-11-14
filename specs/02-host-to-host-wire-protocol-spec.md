@@ -76,7 +76,7 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 
 | Opcode | Name | Client Sender VA | Server Handler VA | Expected Reply Opcode(s) | Payload Format (after `opcode` byte at `+0x00`) |
 | :---: | :--- | :--- | :--- | :---: | :--- |
-| **`0x01`** | **Query Peer Root / Drives** | `0x0040DC76` | `0x0043D479` | `0xA3` | `[0x01]` (1 byte total; no parameters) |
+| **`0x01`** | **Query Peer Root / Drives** | `0x0040D9C9` | `0x0043D479` | `0xA4` (and `0xA1`) | `[0x01][flags:u8][param:u16_le][path_len:u8][path:bytes]` (5 bytes total for root query; Section 4.2.1) |
 | **`0x02`** | **List Directory (`FindFirstFile`)** | `0x0040DCF0` | `0x0043D577` | `0xA3` (or `0xA2` on error) | `[0x02][path_len:u32_le][dir_path:bytes]` |
 | **`0x03`** | **Delete File** | `0x0040DDD0` | `0x0043D64D` | `0xA1` (`status=1`) or `0xA2` | `[0x03][path_len:u32_le][file_path:bytes]` |
 | **`0x04`** | **Delete Directory (Recursive)** | `0x0040DEB0` | `0x0043D741` | `0xA1` (`status=1`) or `0xA2` | `[0x04][path_len:u32_le][dir_path:bytes]` |
@@ -92,18 +92,43 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | **`0x0E`** | **Query Drive Free/Total Space** | `0x0040EE90` | `0x0043FFA6` | `0xA3` | `[0x0E][path_len:u32_le][root_path:bytes]` |
 | **`0x0F`** | **Pre-Check Single File Overwrite** | `0x0040EF70` | `0x0043E3B4` | `0xA1` (`1`=New, `3`=Exists) | `[0x0F][path_len:u32_le][dest_path:bytes]` |
 | **`0x10`** | **Set Peer Platform = Mac (`bMac=1`)** | — | `0x0043DC6A` | `0xA1` (`status=0x10`) | `[0x10]` (1 byte; sets `[0x0045F980] = 1`) |
-| **`0x14`** | **Batch Upload Pre-Check** | `0x0040F050` | `0x0043EFC0` | `0xA8` | `[0x14][dest_dir_len:u32_le][item_count:u32_le][dest_dir:bytes][items: (len:u32_le, rel_path:bytes)...]` |
-| **`0x15`** | **Extended Batch Pre-Check (w/ Metadata)** | `0x0040F310` | `0x0043F4E0` | `0xAA` | `[0x15][dest_dir_len:u32_le][item_count:u32_le][dest_dir:bytes][items: (len:u32_le, find_data:320B, rel_path:bytes)...]` |
-| **`0x16`** | **`<OTIMSG>` XML Control Message** | `0x004215B0` | `0x00420D71` | `0x16` (XML reply) | `[0x16][xml_len:u32_le][xml_ascii_string:bytes]` (Section 7.1) |
-| **`0x17`** | **Query Localized Win32 Error Strings** | `0x0040F650` | `0x00441AF0` | `0xAC` | `[0x17][err_count:u32_le][err_codes: u32_le[err_count]]` |
+| **`0x11`** | **Abort Batch File Transfer** | `0x0040E19F` | `0x0043E45C` | `0xA1` | `[0x11]` (1 byte) |
+| **`0x12`** | **Batch Prepare / Clear Read-Only Attributes** | `0x0040E628` | `0x0043F981` | `0xA1` | `[0x12]` (1 byte) |
+| **`0x13`** | **Batch Upload Pre-Check (Space & Conflicts)** | `0x0040E468` | `0x0043F269` | `0xA8` | `[0x13][dest_dir_len:u32_le][item_count:u32_le][dest_dir:bytes][items: (len:u32_le, rel_path:bytes)...]` |
+| **`0x14`** | **Cancel Active Packet Splitter Job** | `0x0040E60A` | `0x0043FCF8` | `0xA1` | `[0x14]` (1 byte) |
+| **`0x15`** | **Create Batch Zero-Length Files** | `0x0040E7B3` | `0x0043FB55` | `0xA1` | `[0x15]` (1 byte) |
+| **`0x16`** | **Extended Batch Upload Pre-Check** | `0x0043F5F3` | `0x0043F5F3` | `0xAA` | `[0x16][dest_dir_len:u32_le][item_count:u32_le][dest_dir:bytes][records...]` (Section 4.2.4) |
+| **`0x17`** | **Query Localized Win32 Error Strings** | `0x0040F6B1` | `0x00441AF0` | `0xAC` | `[0x17][err_count:u32_le][err_codes: u32_le[err_count]]` |
 | **`0x32`** | **Virtual NIC Mode-Switch XML (`<ExtraXmlCommand>`)** | `0x0040F730` | `0x00441DB1` | `0x32` / Mode Switch | `[0x32][xml_ascii_nul_terminated]` (Section 7.2) |
+| **`0x34`** | **Dynamic Library Plugin RPC XML Tunnel (`<OTIMSG>`)** | `0x0040EFDF` | `0x0043F13D` | `0x34` | `[0x34][dll_name_len:u8][dll_name:bytes][xml_len:u32_le][xml_bytes]` (Section 7.1) |
 | **`0x33..0x39`** | **Extended XML Command Channel (`51..57`)** | `0x0040F730` | `0x00441DB1` | `0x33..0x39` | `[0x33..0x39][xml_ascii_nul_terminated]` (routed to `0x00441DB1` alongside `0x32`) |
 
 ---
 
 ### 4.2 Detailed Client Command Payload Specifications
 
-#### 4.2.1 `0x09` — Upload Single File to Peer (`0x0043DD10`)
+#### 4.2.1 `0x01` — Query Peer Root / Drives (`0x0040D9C9` / `0x0043D479`)
+Queries the remote peer's logical drives and volumes. Constructed by the client sender at `0x0040D9C9` (formatting at `0x0040D9F8`) and handled by `0x0043D479`:
+```text
+Offset  Size        Type          Field
++0x00   1           uint8         opcode = 0x01
++0x01   1           uint8         flags (Platform / Mac flags from [0x47FFFC]; bit 4: 0x10 = Mac mode, bit 5: 0x20)
++0x02   2           uint16_le     param (transaction sequence counter, typically 0x0000)
++0x04   1           uint8         path_len (0 for root drive query, or N for subpath)
++0x05   N           bytes         path (ASCII/MBCS path on peer if path_len > 0)
+```
+- **Root Query Framing:** For querying root drives/volumes, `path_len = 0` and the packet is exactly **5 bytes total**:
+  `[0x01][flags:u8][param:u16_le][0x00]`
+- **Server Behavior (`0x0043D479`):**
+  1. Reads `flags` (`edi[0]`) and `param` (`*(u16*)&edi[1]`). If `flags & 0x10 != 0`, sets `bMac = 1`.
+  2. Reads `path_len` (`edi[3]`).
+  3. Sends Server Reply `0xA1` (`status = 1`, Generic OK) via `0x0043FFF9`.
+  4. Calls `0x00440FDC` to enumerate logical drives (`GetLogicalDriveStringsA` / `GetDriveTypeA`), which formats and sends Server Reply **`0xA4`** (**Remote Logical Drive List**).
+- **Critical Implementation Pitfall:**
+  > [!WARNING]
+  > Opcode `0x01` is **not a 1-byte command**. Sending only 1 byte (`b"\x01"`) results in an immediate buffer underrun: the handler reads `flags`, `param`, and `path_len` out-of-bounds from whatever uninitialized bytes follow the buffer in memory, corrupting state and causing communication desynchronization.
+
+#### 4.2.2 `0x09` — Upload Single File to Peer (`0x0043DD10`)
 Uploads a single file along with its original `WIN32_FIND_DATAA` attributes and timestamps:
 
 ```text
@@ -122,7 +147,7 @@ Offset  Size        Type          Field
   3. Restores `CreationTime`, `LastAccessTime`, and `LastWriteTime` via `SetFileTime` (`0x0043DE80`) and file attributes via `SetFileAttributesA` (`0x0043DEA5`).
   4. Sends `0xA1` reply with `status = 0x09` on success, or `0xA2` with `GetLastError()` on failure.
 
-#### 4.2.2 `0x0B` — Batch Upload Files/Directories to Peer (`0x0043E4DA`)
+#### 4.2.3 `0x0B` — Batch Upload Files/Directories to Peer (`0x0043E4DA`)
 Uploads a batch of files and/or empty directories into a target base directory:
 
 ```text
@@ -148,6 +173,33 @@ Record Offset  Size        Type          Field
 - **Server Behavior (`0x0043E4DA`):**
     - Creates all intermediate parent directories (`0x00442610`), writes each file, restores `FILETIME` and `dwFileAttributes`, and replies with `0xA1` (`status = 0x0B`) or `0xA9` (Batch File Error Notification).
 
+#### 4.2.4 `0x16` — Extended Batch Upload Pre-Check (`0x0043F5F3`)
+Performs a pre-transfer metadata collision check for a batch of files against the peer's existing files before upload:
+```text
+Offset  Size        Type          Field
++0x00   1           uint8         opcode = 0x16
++0x01   4           uint32_le     dest_dir_len (D)
++0x05   4           uint32_le     item_count (K)
++0x09   D           bytes         dest_dir (ASCII/MBCS target directory on peer)
++0x09+D ...         records[K]    Back-to-back file metadata pre-check records
+```
+Each of the `K` records has the layout:
+```text
+Record Offset  Size        Type          Field
++0x00          4           uint32_le     rel_path_len (R)
++0x04          320 (0x140) struct        WIN32_FIND_DATAA (source file attributes, size, and timestamps)
++0x144         R           bytes         rel_path (relative path under dest_dir)
+```
+- **Server Behavior (`0x0043F5F3`):**
+  1. Dispatched from Client Command Dispatcher `0x0043D181` via `0x0043D2DE..0x0043D310`.
+  2. Reads `dest_dir` and iterates through all `item_count` records.
+  3. Tests whether each target file already exists on the peer via `FindFirstFileA`.
+  4. For every colliding item, records both the peer's existing `WIN32_FIND_DATAA` and the source `WIN32_FIND_DATAA`.
+  5. Generates Server Reply **`0xAA`** (**Extended Batch Pre-Check Reply** at `0x0044196E`) containing both sets of metadata so the client can display Dialog `133` (`Confirm Replace File`) with accurate date/size comparisons.
+- **Critical Opcode 0x16 Crash Pitfall:**
+  > [!CAUTION]
+  > Opcode `0x16` is **strictly a binary batch pre-check command**; it is **NOT** an XML channel. If a client transmits `<OTIMSG>` ASCII XML preceded by opcode `0x16`, `EasySuite.exe` interprets the leading 4 ASCII bytes `b"<OTI"` (`0x49544F3C` = 1,230,327,612) as a 32-bit count, attempts to loop and allocate memory for 1.23 billion items, and crashes fatally in `ntdll!RtlFreeHeap`.
+
 ---
 
 ## 5. Complete Server Reply Catalog (`0xA1..0xAC`)
@@ -165,9 +217,9 @@ Server Replies are sent by `0x0043FD2D..0x00441DA8` in response to Client Comman
 | **`0xA5`** | **Batch File Download Stream Reply** | `0x00441566` | `0x0040C090` | `[0xA5][file_count:u32_le][records: (path_len:u32_le, data_len:u32_le, find_data:320B, path:bytes, data:bytes)...]` |
 | **`0xA6`** | **Batch Zero-Length Files / Empty Dirs** | `0x00441602` | `0x0040CFEF` | `[0xA6][item_count:u32_le][records: (path_len:u32_le, find_data:320B, path:bytes)...]` (items with 0 data bytes during `0x0C`) |
 | **`0xA7`** | **Batch Download Complete / All-Empty** | `0x0044175A` | `0x0040D210` | `[0xA7]` (1 byte; signals end of `0x0C` batch download when no non-empty stream remains) |
-| **`0xA8`** | **Batch Upload Pre-Check Reply** | `0x004418C9` | `0x0040D290` | `[0xA8][existing_count:u32_le][records: (path_len:u32_le, path:bytes)...]` (subset of `0x14` items that already exist on peer) |
+| **`0xA8`** | **Batch Upload Pre-Check Reply** | `0x004418C9` | `0x0040D290` | `[0xA8][existing_count:u32_le][records: (path_len:u32_le, path:bytes)...]` (subset of `0x13` items that already exist on peer) |
 | **`0xA9`** | **Batch Upload Error Notification** | `0x004417A0` | `0x0040D420` | `[0xA9][win32_error:u32_le][failed_path_len:u32_le][failed_path:bytes]` |
-| **`0xAA`** | **Extended Batch Pre-Check Reply** | `0x0044196E` | `0x0040D650` | `[0xAA][existing_count:u32_le][records: (path_len:u32_le, peer_find_data:320B, src_find_data:320B, path:bytes)...]` (response to `0x15` with both peer and source `WIN32_FIND_DATAA` for overwrite comparison dialog) |
+| **`0xAA`** | **Extended Batch Pre-Check Reply** | `0x0044196E` | `0x0040D650` | `[0xAA][existing_count:u32_le][records: (path_len:u32_le, peer_find_data:320B, src_find_data:320B, path:bytes)...]` (response to `0x16` with both peer and source `WIN32_FIND_DATAA` for overwrite comparison dialog) |
 | **`0xAB`** | **Batch Unreadable Files Notification** | `0x004416AE` | `0x0040D840` | `[0xAB][failed_count:u32_le][records: (path_len:u32_le, win32_err:u32_le, path:bytes)...]` (files that failed `FindFirstFile`/`CreateFile` during `0x0C`) |
 | **`0xAC`** | **Formatted Win32 Error Strings Reply** | `0x00441CC4` | `0x0040BA16` | `[0xAC][count:u32_le][records: (err_code:u32_le, msg_len:u32_le, formatted_msg:bytes)...]` (response to `0x17` via `FormatMessageA`) |
 
@@ -205,30 +257,43 @@ Offset   Size   Type          Field Name              Description
 
 ## 7. `<OTIMSG>` and `<ExtraXmlCommand>` XML Control Protocols
 
-### 7.1 `<OTIMSG>` Session & Handshake Protocol (Opcode `0x16`, `0x00420D71`)
-Opcode `0x16` carries an ASCII XML document framed as `[0x16][xml_len:u32_le][xml_bytes]`. Both peers exchange `<OTIMSG>` messages immediately after link establishment (`0x00420800..0x00421F50`).
+### 7.1 `<OTIMSG>` Dynamic Library Plugin RPC Protocol (Opcode `0x34`, `0x0043F13D` / `0x00420D71`)
 
-#### XML Schema & Recognised Tags
+> [!IMPORTANT]
+> **No XML Handshake in Standard File Transfer:**
+> Disassembly of `EasySuite.exe` reveals that standard file manager operations do **not** exchange an XML handshake upon link connection. As soon as both sides enter Transfer Line Mode (`0xD8 0x01` `op_type=5, param=0x007F`), both hosts immediately transition to the connected state (status bar `"Connected"`, ID `0xF026`) and issue Client Command **`0x01`** (**Query Peer Root / Drives**) using the 5-byte structure described in Section 4.2.1.
+> 
+> Furthermore, Opcode **`0x16` is NOT an XML control channel**; it is the **Extended Batch Upload Pre-Check** command (`0x0043F5F3`, Section 4.2.4). Framing `<OTIMSG>` ASCII XML with opcode `0x16` causes `EasySuite.exe` to interpret the first 4 ASCII bytes `b"<OTI"` (`0x49544F3C` = ~1.23 billion) as a 32-bit count, resulting in an immediate crash in `ntdll!RtlFreeHeap`.
 
+#### Architecture & RPC Dispatch
+In `EasySuite.exe`, `<OTIMSG>` XML messages are used exclusively for inter-host Remote Procedure Calls (RPC) between dynamic library plugins (such as `ECN001.DLL` for Microsoft Outlook / PIM synchronization):
+1. **Thread Origin:** The XML processing loop is executed exclusively by dedicated dynamic library plugin RPC threads spawned via `CreateThread` at `0x0040FA3C` (thread worker at `0x00434CDD`).
+2. **Wire Framing:** RPC messages are tunneled across the bulk wire protocol using Client Command **`0x34`** (`0x0040EFDF` client sender, dispatched to `0x0043F13D` on the server).
+3. **Parser (`0x00420D71`):** The XML parser searches for root tag `<OTIMSG>` and command tags `<DynamicLibCmd>` and `<TransferFile>`.
+
+#### Recognized Tags & XML Schema
 ```xml
 <OTIMSG>
-    <MSG_TYPE>COMMAND</MSG_TYPE>
-    <COMMAND>CONNECT</COMMAND>
-    < SYSTEM_INFO >
-        <OS_VERSION>...</OS_VERSION>
-        <COMPUTER_NAME>...</COMPUTER_NAME>
-    </ SYSTEM_INFO >
+    <DynamicLibCmd>COMMAND_NAME</DynamicLibCmd>
+    <MultiID>...</MultiID>
+    <SingleID>...</SingleID>
+    <SrcW>SOURCE_PATH_OR_ITEM</SrcW>
+    <TrgW>TARGET_PATH_OR_ITEM</TrgW>
+    <DataCounter>0</DataCounter>
+    <AllDataCounter>0</AllDataCounter>
 </OTIMSG>
 ```
 
-*(Note: The parser at `0x00420D71` searches for literal opening/closing tags including `< SYSTEM_INFO >` and `</ SYSTEM_INFO >` with spaces around `SYSTEM_INFO`, as well as `<OTIMSG>`, `<MSG_TYPE>`, `<COMMAND>`, `<PARAMETER>`, and `<RESULT>`.)*
-
-| `<MSG_TYPE>` | `<COMMAND>` / Payload | Sender / Handler Behavior |
-| :--- | :--- | :--- |
-| `COMMAND` | `CONNECT` | Sent when local host detects peer mode `0x007F`. Peer responds with `<MSG_TYPE>RESPONSE</MSG_TYPE><COMMAND>CONNECT</COMMAND>` and its `< SYSTEM_INFO >`, triggering initial remote drive query (`0x01`). |
-| `COMMAND` | `DISCONNECT` | Sent cleanly before closing `EasySuite.exe` or switching modes (`0x00421680`). Peer clears remote pane and returns to waiting state. |
-| `COMMAND` | `TEST` / `KEEPALIVE` | Link heartbeat check (`0x00421740`). |
-| `RESPONSE` | `CONNECT` / `DISCONNECT` | Acknowledges the corresponding `COMMAND`. |
+| Tag Name | Role in Plugin RPC (`0x00420D71` / `0x00434CDD`) |
+| :--- | :--- |
+| `<OTIMSG>` | Envelope root tag. |
+| `<DynamicLibCmd>` | Add-on plugin command verb passed to `ECN001.DLL` / companion tools. |
+| `<TransferFile>` | Internal file transfer directive dispatched during plugin data sync. |
+| `<MultiID>` / `<SingleID>` | Item identifiers for batch item selection and record tracking. |
+| `<SrcW>` / `<TrgW>` | Wide/Unicode source and target item paths or MAPI entry identifiers. |
+| `<ExceptionCode>` / `<WhereError>` | Error propagation tags returned in failure replies. |
+| `<DataCounter>` / `<AllDataCounter>` | Progress and record counters during synchronization. |
+| `<DriveListData>` | Logical drive list payload tunneled to plugin components. |
 
 ### 7.2 `<ExtraXmlCommand>` Virtual NIC Mode-Switch Protocol (Opcode `0x32`, `0x00441DB1`)
 When the user clicks the **Virtual Network** button or selects **Switch EasySync to Virtual Network** (`Menu ID 32789`), `EasySuite.exe` sends opcode `0x32` containing a NUL-terminated XML string with root tag `<ExtraXmlCommand>...</ExtraXmlCommand>`:
