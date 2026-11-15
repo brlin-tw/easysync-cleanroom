@@ -154,7 +154,7 @@ Offset  Size        Type          Field
   2. Copies `path_len` bytes into a buffer via `memcpy(buf, eax, edi)`.
   3. At `0x0043D5D7`, compares the path string against the active directory stored at `[esi + 0x20]` using `MSVCRT!_mbscmp`.
   4. If changed, calls `0x0041DD84` (`0x0043D60E`), posting internal Win32 UI message `0xFBD` via `PostMessageA` to update the GUI active navigation state.
-  5. At `0x0043D5F6` / `0x0043D622`, calls `0x0043FFF9` to format and transmit Server Reply **`0xA1`** with **`status = 2`** (`STATUS_ACTIVE_DIR_ACK`).
+  5. At `0x0043D5F6` / `0x0043D622`, calls `0x0043FFF9` to format and transmit Server Reply **`0xA1`** (24-byte structured ACK, `req_opcode = 0x02`, `status = 0`, `req_id = 0`, `win32_error = 0`).
 - **Clarification:**
   > [!NOTE]
   > Opcode `0x02` is strictly a notification command; it does **not** call `FindFirstFileA` or enumerate directory contents. Directory listing and enumeration is handled separately by Opcode `0x04` (`0x0040DB44` / `0x0043D741`) or refreshed via Opcode `0x03` (`0x0043D64D`), which return 552-byte structures via Server Reply **`0xA2`**.
@@ -316,7 +316,7 @@ Offset   Size   Type          Field Name              Description
 
 > [!IMPORTANT]
 > **No XML Handshake in Standard File Transfer:**
-> Disassembly of `EasySuite.exe` reveals that standard file manager operations do **not** exchange an XML handshake upon link connection. As soon as both sides enter Transfer Line Mode (`0xD8 0x01` `op_type=5, param=0x007F`), both hosts immediately transition to the connected state (status bar `"Connected"`, ID `0xF026`) and issue Client Command **`0x01`** (**Query Peer Root / Drives**) using the 5-byte structure described in Section 4.2.1.
+> Disassembly of `EasySuite.exe` reveals that standard file manager operations do **not** exchange an XML handshake upon link connection. As soon as both sides enter Transfer Line Mode (`0xD8 0x01` `op_type=5, param=0x007F`), both hosts immediately transition to the connected state (status bar `"Connected"`, ID `0xF026`) and issue Client Command **`0x01`** (**Query Peer Root / Drives**) using the 11-byte structure described in Section 4.2.1.
 >
 > Furthermore, Opcode **`0x16` is NOT an XML control channel**; it is the **Extended Batch Upload Pre-Check** command (`0x0043F5F3`, Section 4.2.4). Framing `<OTIMSG>` ASCII XML with opcode `0x16` causes `EasySuite.exe` to interpret the first 4 ASCII bytes `b"<OTI"` (`0x49544F3C` = ~1.23 billion) as a 32-bit count, resulting in an immediate crash in `ntdll!RtlFreeHeap`.
 
