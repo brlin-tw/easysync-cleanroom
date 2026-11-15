@@ -300,13 +300,17 @@ sequenceDiagram
         Host->>Bridge: 6. CDB 0xDB 0x28 (addr=0x0022, cnt=1, IN 512B)
         Bridge-->>Host: Check "OTiMing" at +0, custom buffer size at +8
     end
-    Host->>Bridge: 7. CDB 0xD8 0x01 (cmd=8, val=0: Flush RX Pipe)
-    Host->>Bridge: 8. CDB 0xD8 0x01 (cmd=7, val=0: Flush TX Pipe)
-    Host->>Bridge: 9. CDB 0xD8 0x00 (op_type=5, IN: Check Peer Mode)
+    Host->>Bridge: 7. CDB 0xD8 0x00 (op_type=5, IN: Check Peer Mode)
     Bridge-->>Host: resp[0..1] (0x007F, 0x0044, or 0x0000)
-    Host->>Bridge: 10. CDB 0xD8 0x01 (cmd=5, val=0x007F: Enter Transfer Line Mode)
+    Host->>Bridge: 8. CDB 0xD8 0x01 (cmd=5, val=0x007F: Enter Transfer Line Mode)
     Bridge-->>Host: OK
+    Host->>Bridge: 9. CDB 0xD8 0x01 (cmd=8, val=0: Flush RX Pipe)
+    Host->>Bridge: 10. CDB 0xD8 0x01 (cmd=7, val=0: Flush TX Pipe)
 ```
+
+> [!IMPORTANT]
+> **Hardware Pipe Flushes and Startup Race Contention:**
+> EasySuite.exe flushes the hardware RX and TX pipes (`CDB 0xD8 0x01` `cmd=8` and `cmd=7` at `0x0041D014` / `0x0043258B`) immediately **after** setting Transfer Line Mode (`0x007F`) and before starting its background link polling thread. If an initiating peer transmits data before the link settles, the transmitted block will either time out with SCSI sense `09/85/00` (`Peer Not Reading / Waiting for Peer`) or get wiped from the bridge FIFO by the incoming peer's startup `cmd=8` flush. Initiating hosts must allow the link to settle (monitoring for quieting and peer startup bursts such as `0x01`, `0x0F`, `0x39`) before dispatching interactive client commands.
 
 ---
 

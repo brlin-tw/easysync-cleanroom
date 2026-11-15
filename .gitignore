@@ -80,6 +80,10 @@
 *.out
 *.output
 
+# Don't track network and USB packet captures
+*.pcap
+*.pcapng
+
 # Don't track compiled Python code caches
 *.pyc
 

@@ -100,7 +100,7 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 2. Start the hardware discovery and poll worker threads (`0x0041A480`).
 3. Populate the **Local Host** pane immediately using native OS filesystem APIs (`GetLogicalDriveStrings`, `FindFirstFile`, `GetDiskFreeSpaceEx`).
 4. While the remote peer is disconnected (`op_type=5` returns `0x0000`), display `"Disconnected"` (`0xF027`) in the status bar and disable remote file operations.
-5. As soon as `op_type=5` returns `0x007F`, both hosts immediately transition to the connected state without exchanging an XML handshake, update status bar to `"Connected"` (`0xF026`), and automatically issue Client Command `0x01` (**Query Peer Root / Drives**) using the 5-byte payload `[0x01][flags:u8][param:u16_le][path_len=0:u8]` to populate the **Remote Host** pane.
+5. As soon as `op_type=5` returns `0x007F`, both hosts transition to Transfer Line Mode, flush their RX and TX hardware pipes (`cmd=8` / `cmd=7` at `0x0041D014`), update status bar to `"Connected"` (`0xF026`), and automatically issue Client Command `0x01` (**Query Peer Root / Drives**) using the 5-byte payload `[0x01][flags:u8][param:u16_le][path_len=0:u8]` to populate the **Remote Host** pane. Initiating hosts must allow the link to settle to avoid pipe contention and buffer flushes.
 6. When the user navigates directories or to synchronize active folder state with the peer, the host issues opcode `0x02` (**Notify / Set Active Remote Directory**) with `[0x02][path_len:u8][dir_path:bytes]`, to which the peer acknowledges with Server Reply `0xA1` (`status = 2`) and posts UI message `0xFBD`.
 
 ### 4.2 Single File Upload (`Local -> Remote`)
