@@ -301,12 +301,16 @@ Offset   Size   Type          Field Name              Description
 +0x004   8      uint64_le     ftCreationTime          Win32 FILETIME creation timestamp
 +0x00C   8      uint64_le     ftLastAccessTime        Win32 FILETIME last access timestamp
 +0x014   8      uint64_le     ftLastWriteTime         Win32 FILETIME last modification timestamp
-+0x01C   4      uint32_le     nFileSizeHigh           High 32 bits of file size
-+0x020   4      uint32_le     nFileSizeLow            Low 32 bits of file size
++0x01C   4      uint32_le     nFileSizeLow            Low 32 bits of file size (contiguous 8-byte uint64_le nFileSize at +0x01C)
++0x020   4      uint32_le     nFileSizeHigh           High 32 bits of file size
 +0x024   4      uint32_le     cFileNameLength         Length of filename in bytes (2 * WCHAR count)
 +0x028   520    wchar_t[260]  cFileName               UTF-16LE wide-character filename (zero-padded to 520 bytes / 260 WCHARs)
 +0x228   ---    (End of 552-byte structure)
 ```
+
+> [!NOTE]
+> **Endianness and Offset of File Size:**
+> In EasySuite's 552-byte directory entry layout, the 64-bit file size is stored contiguously in standard little-endian order starting at offset `+0x01C`: `nFileSizeLow` is at `+0x01C` and `nFileSizeHigh` is at `+0x020` (equivalent to an 8-byte `uint64_le` at `+0x01C`). This differs from the Win32 `WIN32_FIND_DATA` C header declaration where `nFileSizeHigh` precedes `nFileSizeLow`; treating `+0x01C` as `nFileSizeHigh` incorrectly shifts file sizes by $2^{32}$.
 
 ---
 

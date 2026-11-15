@@ -349,6 +349,18 @@ Once initialized, a dedicated worker thread (`0x00433260` $\rightarrow$ `0x0041B
 3. If `remote_blocks == 0`, issues `0xD8 0x00` (`op_type = 5`) to check if the peer switched to Virtual NIC mode (`0x0044`, posting error `0xF042` `"Remote is running at NetWork Mode!!"`).
 4. Resets `state = 0` (Poll).
 
+### 6.4 Teardown, Disconnect, and Offline Sequencing (`0x00420A2E`)
+
+When terminating the session or shutting down the application:
+1. Stop and join the background link polling worker thread (`LinkPoller`).
+2. Put the bridge into offline/reset mode via `CDB 0xD8 0x01` (`cmd = 5, val = 0x0000`).
+3. Reset hardware timeout to default via `CDB 0xD8 0x01` (`cmd = 4, val = 0x1388` / 5000 ms at `0x00431A29`).
+4. Close the SCSI pass-through or USB device handle.
+
+> [!CAUTION]
+> **Poller Race Condition on Disconnect:**
+> Setting local operating mode to offline (`cmd = 5, val = 0x0000`) disables the OTi-2108 pipe logic. If the background worker thread issues `0xD8 0x00 op_type=3` while the bridge is in offline mode, the hardware rejects the CDB with SCSI status 1 (`00/00/00 No Sense / Command Succeeded` or Check Condition). Clean-room implementations MUST stop and join the polling thread *before* sending `cmd = 5, val = 0x0000`.
+
 ---
 
 ## 7. Verified Physical Hardware Golden Capture (`0ea0:2108`)
