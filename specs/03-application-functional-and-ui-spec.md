@@ -128,9 +128,26 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 5. Send file and directory records, create remote directories via `0x07` (`CreateDirectory`), and stream file chunks via `0x0C`.
 6. Wait for `0xA1` (`status == 0`) or `0xA9` (Batch Error). If an unfamiliar Win32 error code is returned, optionally send `0x38` (**Format Win32 Error Codes**) and display the peer's `0xAC` formatted error message.
 
-### 4.4 Single & Batch Download (`Remote -> Local`)
-1. For a single file, check local overwrite (`Confirm Replace File` Dialog `133`), then send `0x0B` (**Single File Download Request**) and stream the incoming `0xA3` payload to the local file, applying the timestamps and attributes via `0x37` upon completion.
-2. For a batch selection (multiple files or folders), send `0x10` (**Batch File Download Request**) or `0x35`/`0x36`. The remote peer expands subdirectories recursively and sends:
+### 4.4 Single File Download (`Remote -> Local`)
+1. **Local Overwrite Check:** Check if target destination file exists locally. If conflict exists, prompt user with Dialog `133` (`Confirm Replace File`).
+2. **Download Initiation (`0x0B`):**
+   + Issue Opcode `0x0B` (`[0x0B][req_id:u32_le][src_path_len:u16_le][src_path:wchar_t][dest_path_len:u16_le][dest_path:wchar_t]`).
+   + `src_path` contains the remote source file full path (e.g. `C:\MSDOS.SYS`), UTF-16LE encoded.
+   + If client destination path is omitted, `dest_path_len` MUST still be sent as `0x0000` (2 bytes); omitting this field desynchronizes server offset tracking and triggers stack buffer overflow crashes in `EasySuite.exe`.
+   + Path byte lengths must not exceed 1024 bytes (512 WCHARs).
+3. **Server Evaluation & Reply Handling:**
+   + **Case 1: Error (`status == 1`):**
+     Server returns 24-byte Server Reply **`0xA1`** (`req_opcode = 0x0B`, `status = 1`, `win32_error = GetLastError()`). Abort transfer and report error.
+   + **Case 2: Zero-Length File (`status == 7`):**
+     Server returns 24-byte Server Reply **`0xA1`** (`req_opcode = 0x0B`, `status = 7`). Client creates an empty 0-byte file locally and completes transfer immediately.
+   + **Case 3: Small File Delivery (`status == 9`, `file_size <= 64,512` bytes):**
+     Server returns a single inline Server Reply **`0xA1`** of size `24 + file_size` bytes. The file payload begins directly at offset `+0x18` (length at `+0x14`). Client writes the embedded file bytes directly to the local file and finalizes the transfer without expecting any `0xA3` chunks.
+   + **Case 4: Large File Streaming (`status == 0`, `file_size > 64,512` bytes):**
+     Server returns an initial 24-byte Server Reply **`0xA1`** (`req_opcode = 0x0B`, `status = 0`, `file_size_low`, `file_size_high`), then streams chunk slices using Server Reply **`0xA3`** (`[0xA3][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][chunk_len:u32_le][chunk_data]`). Client writes each chunk sequentially until `chunk_index + 1 == total_chunks`.
+4. **Finalization:** Client applies timestamps and attributes locally and updates Dialog `131` (`Progress Information`).
+
+### 4.5 Batch Download (`Remote -> Local`, Multiple Files & Subdirectories)
+1. For a batch selection (multiple files or folders), send `0x10` (**Batch File Download Request**) or `0x35`/`0x36`. The remote peer expands subdirectories recursively and sends:
    + `0xAB` if any files could not be opened/statted,
    + `0xA6` for all zero-length files and empty directories (created immediately on the local disk),
    + `0xA3` streaming non-empty file data chunks (written sequentially to disk with progress updates), finalized by `0xA7` (Batch Download Complete ACK).
