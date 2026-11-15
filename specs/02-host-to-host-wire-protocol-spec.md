@@ -77,7 +77,7 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | Opcode | Name | Client Sender VA | Server Handler VA | Expected Reply Opcode(s) | Payload Format (after `opcode` byte at `+0x00`) |
 | :---: | :--- | :--- | :--- | :---: | :--- |
 | **`0x01`** | **Query Peer Root / Drives** | `0x0040D9C9` | `0x0043D479` | `0xA4` (and `0xA1`) | `[0x01][flags:u8][param:u16_le][path_len:u8][path:bytes]` (5 bytes total for root query; Section 4.2.1) |
-| **`0x02`** | **Verify Peer Computer Name** | `0x0040DAAD` | `0x0043D577` | `0xA1` (`status=1`) | `[0x02][name_len:u8][name:bytes]` (MBCS peer computer name; Section 4.2.2) |
+| **`0x02`** | **Notify / Set Active Remote Directory** | `0x0040DA90` | `0x0043D577` | `0xA1` (`status=2`) | `[0x02][path_len:u8][dir_path:bytes]` (folder-change notification; Section 4.2.2) |
 | **`0x03`** | **Query Remote Current Directory** | `0x0040DB21` | `0x0043D64D` | `0xA1` | `[0x03]` (1 byte; queries current working directory on peer) |
 | **`0x04`** | **Change / List Remote Directory** | `0x0040DB44` | `0x0043D741` | `0xA3` (or `0xA2` on error) | `[0x04][path_len:u16_le][dir_path:bytes]` (emits 552B `0xA3` listing; Section 4.2.3) |
 | **`0x05`** | **Select Remote Drive (Legacy/No-op)** | `0x0040DC28` | `0x0043D394` | — | `[0x05]` (1 byte; legacy/no-op, jumps to exit `0x0043D42A`) |
@@ -135,21 +135,29 @@ Offset  Size        Type          Field
   > [!WARNING]
   > Opcode `0x01` is **not a 1-byte command**. Sending only 1 byte (`b"\x01"`) results in an immediate buffer underrun: the handler reads `flags`, `param`, and `path_len` out-of-bounds from whatever uninitialized bytes follow the buffer in memory, corrupting state and causing communication desynchronization.
 
-#### 4.2.2 `0x02` — Verify Peer Computer Name (`0x0040DAAD` / `0x0043D577`)
-Transmits the local computer name to verify or establish peer session identity. Sent by the client sender at `0x0040DAAD` and handled at `0x0043D577`:
+#### 4.2.2 `0x02` — Notify / Set Active Remote Directory (`0x0040DA90` / `0x0043D577`)
+
+Notifies the peer host of the currently selected or active local directory path (folder-change notification). Constructed by the client sender at `0x0040DA90` (called when navigating folders, passing active directory CString at `0x0041DD7D`) and handled by the peer at `0x0043D577`:
 
 ```text
 Offset  Size        Type          Field
 +0x00   1           uint8         opcode = 0x02
-+0x01   1           uint8         name_len (N)
-+0x02   N           bytes         computer_name (ASCII/MBCS local computer name, without NUL)
++0x01   1           uint8         path_len (N)
++0x02   N           bytes         dir_path (ASCII/MBCS active directory path, without NUL)
 ```
 
+- **Framing Specification:**
+    - Length prefix `path_len` is strictly a single byte (`uint8`), **not** a 4-byte `uint32_le` or 2-byte `uint16_le`.
+    - The path string starts immediately at offset `+0x02`.
 - **Server Behavior (`0x0043D577`):**
-  1. Reads `name_len` (`byte ptr [eax]`).
-  2. Allocates `name_len + 1` bytes and copies the computer name string.
-  3. Compares the name against local identity or configuration via `_mbscmp`.
-  4. Responds with Server Reply `0xA1` (`status = 1`, Generic OK) via `0x0043FFF9`.
+  1. Reads `path_len` (`cl = byte ptr [eax]`, zero-extending into `edi`).
+  2. Copies `path_len` bytes into a buffer via `memcpy(buf, eax, edi)`.
+  3. At `0x0043D5D7`, compares the path string against the active directory stored at `[esi + 0x20]` using `MSVCRT!_mbscmp`.
+  4. If changed, calls `0x0041DD84` (`0x0043D60E`), posting internal Win32 UI message `0xFBD` via `PostMessageA` to update the GUI active navigation state.
+  5. At `0x0043D5F6` / `0x0043D622`, calls `0x0043FFF9` to format and transmit Server Reply **`0xA1`** with **`status = 2`** (`STATUS_ACTIVE_DIR_ACK`).
+- **Clarification:**
+  > [!NOTE]
+  > Opcode `0x02` is strictly a notification command; it does **not** call `FindFirstFileA` or enumerate directory contents. Directory listing and enumeration is handled separately by Opcode `0x04` (`0x0040DB44` / `0x0043D741`), which returns 552-byte structures via Server Reply `0xA3`.
 
 #### 4.2.3 `0x04` — Change / List Remote Directory (`0x0040DB44` / `0x0043D741`)
 Requests the remote host to change to the target directory and return its full directory listing. Constructed at `0x0040DB44` and handled at `0x0043D741`:
@@ -257,7 +265,7 @@ Server Replies are sent by `0x0043FD2D..0x00441DA8` in response to Client Comman
 
 | Opcode | Name | Server Sender VA | Client Handler VA | Payload Format (after `opcode` byte at `+0x00`) |
 | :---: | :--- | :--- | :--- | :--- |
-| **`0xA1`** | **Command Status / ACK** | `0x0043FD2D` | `0x0040BA96` | `[0xA1][status_code:u8]` (2 bytes total):<br/>`1` = Generic OK / File Does Not Exist (`0x0F`)<br/>`3` = File Already Exists (`0x0F` overwrite prompt)<br/>`9` = Single File Upload (`0x09`) Complete<br/>`0x0B` = Batch Upload (`0x0B`) Complete<br/>`0x10` = Mac Mode (`0x10`) ACK |
+| **`0xA1`** | **Command Status / ACK** | `0x0043FD2D` | `0x0040BA96` | `[0xA1][status_code:u8]` (2 bytes total):<br/>`1` = Generic OK / File Does Not Exist (`0x0F`)<br/>`2` = Active Directory Notification ACK (Opcode `0x02`)<br/>`3` = File Already Exists (`0x0F` overwrite prompt)<br/>`9` = Single File Upload (`0x09`) Complete<br/>`0x0B` = Batch Upload (`0x0B`) Complete<br/>`0x10` = Mac Mode (`0x10`) ACK |
 | **`0xA2`** | **Command Error (Win32 Error Code)** | `0x0043FDC9` | `0x0040BB10` | `[0xA2][win32_error:u32_le]` (5 bytes total; e.g., `ERROR_DISK_FULL = 112`, `ERROR_ACCESS_DENIED = 5`) |
 | **`0xA3`** | **Directory / Drive Listing Reply** | `0x004400B6` | `0x0040BC20` | `[0xA3][entry_count:u32_le][entries: Entry552[entry_count]]` (`5 + 552 * entry_count` bytes; see Section 6) |
 | **`0xA4`** | **Single File Download Data Reply** | `0x00440C8B` | `0x0040BE10` | `[0xA4][file_size:u32_le][find_data:320B][file_data:bytes]` (`325 + file_size` bytes; response to `0x0A`) |
@@ -274,7 +282,7 @@ Server Replies are sent by `0x0043FD2D..0x00441DA8` in response to Client Comman
 
 ## 6. 552-Byte (`0x228`) Directory & Drive Entry Structure (`0xA3`)
 
-Server Reply `0xA3` (`0x004400B6`, handled at `0x0040BC20`) returns an array of `entry_count` fixed-size **552-byte (`0x228`) structures**. This single structure represents both **logical drives/volumes** (in response to `0x01` or `0x0E`) and **files/subdirectories** (in response to `0x02`).
+Server Reply `0xA3` (`0x004400B6`, handled at `0x0040BC20`) returns an array of `entry_count` fixed-size **552-byte (`0x228`) structures**. This single structure represents both **logical drives/volumes** (in response to `0x01` or `0x0E`) and **files/subdirectories** (in response to `0x04`).
 
 ```text
 Offset   Size   Type          Field Name              Description
