@@ -34,7 +34,7 @@ The main toolbar / header area includes six hardware status indicators updated b
 ### 1.2 File List Columns (String IDs `0xF02B..0xF032`)
 1. **In Directory List Mode:**
    + `Name` (`0xF02B`), `Size` (`0xF02D`), `Type` (`0xF02E`), `Modified` (`0xF02F`).
-2. **In Root / Drive List Mode (`entry_kind == 0` in `0xA3`):**
+2. **In Root / Drive List Mode (`entry_kind == 0` in `0xA2` or `0xA4`):**
    + `Name` (`0xF02B`), `Type` (`0xF02E`), `Total Size` (`0xF030`), `Free Space` (`0xF031`), `Comment` (`0xF032`).
 
 ---
@@ -114,7 +114,7 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
    + Stream file contents across subsequent 64 KB blocks using `0x0C` (`[0x0C][offset:u32_le][chunk_len:u32_le][chunk_data]`).
    + Send `0x0E` (`[0x0E]`) to commit timestamps and file attributes.
    + Update Dialog `131` (`Progress Information`) after each 64 KB bulk block.
-   + Wait for `0xA1` (`status == 9`) or `0xA2` (Win32 error code).
+   + Wait for `0xA1` (`status == 9` on success, or failure status code).
 4. **Refresh:** Re-issue `0x04` (**Change / List Remote Directory**) on the target remote folder to update the UI.
 
 ### 4.3 Batch Upload (`Local -> Remote`, Multiple Files & Subdirectories)

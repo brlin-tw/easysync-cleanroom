@@ -51,7 +51,7 @@ The RX reassembler thread dequeues `0x10000`-byte blocks from the RX queue and r
      + If `0xA1 <= opcode <= 0xAC`: dispatches to **Server Reply Dispatcher (`0x0040B93F`)**.
      + Otherwise (`0x01 <= opcode <= 0x39`): dispatches to **Client Command Dispatcher (`0x0043D181`)**.
 2. **Multi-Block Reassembly (`total_chunks > 1`):**
-   - For **in-memory commands/replies** (e.g., large directory listings `0xA3`, batch pre-check lists `0x14`/`0xA8`/`0xAA`):
+   - For **in-memory commands/replies** (e.g., large directory listings `0xA2`, batch pre-check lists `0x14`/`0xA8`/`0xAA`):
      + On `chunk_index == 0`, allocates an accumulation buffer of `total_chunks * 0xFFEC` bytes and records `expected_msg_seq_id = msg_seq_id`.
      + For each subsequent chunk (`chunk_index == 1 .. total_chunks - 1`), verifies `msg_seq_id == expected_msg_seq_id` and appends `block[0x14 : 0x14 + chunk_payload_len]`.
      + When `chunk_index == total_chunks - 1`, dispatches the complete reassembled buffer to `0x0040B93F` or `0x0043D181`.
@@ -78,15 +78,15 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | :---: | :--- | :--- | :--- | :---: | :--- |
 | **`0x01`** | **Query Peer Root / Drives** | `0x0040D9C9` | `0x0043D479` | `0xA4` (and `0xA1`) | `[0x01][flags:u8][param:u16_le][path_len:u8][path:bytes]` (5 bytes total for root query; Section 4.2.1) |
 | **`0x02`** | **Notify / Set Active Remote Directory** | `0x0040DA90` | `0x0043D577` | `0xA1` (`status=2`) | `[0x02][path_len:u8][dir_path:bytes]` (folder-change notification; Section 4.2.2) |
-| **`0x03`** | **Query Remote Current Directory** | `0x0040DB21` | `0x0043D64D` | `0xA1` | `[0x03]` (1 byte; queries current working directory on peer) |
-| **`0x04`** | **Change / List Remote Directory** | `0x0040DB44` | `0x0043D741` | `0xA3` (or `0xA2` on error) | `[0x04][path_len:u16_le][dir_path:bytes]` (emits 552B `0xA3` listing; Section 4.2.3) |
+| **`0x03`** | **Refresh Current Directory** | — | `0x0043D64D` | `0xA1` (`status=3`), then `0xA2` | `[0x03]` (1 byte; re-lists active directory on peer, returns 0xA1 followed by 0xA2 listing) |
+| **`0x04`** | **Change / List Remote Directory** | `0x0040DB44` | `0x0043D741` | `0xA1` (`status=4`), then `0xA2` | `[0x04][path_len:u16_le][dir_path:bytes]` (emits 0xA1 status=4 followed by 552B `0xA2` listing; Section 4.2.3) |
 | **`0x05`** | **Select Remote Drive (Legacy/No-op)** | `0x0040DC28` | `0x0043D394` | — | `[0x05]` (1 byte; legacy/no-op, jumps to exit `0x0043D42A`) |
-| **`0x06`** | **Remove Remote Directory** | `0x0040EE3A` | `0x0043D90F` | `0xA1` (`status=1`) or `0xA2` | `[0x06][path_len:u32_le][dir_path:bytes]` (calls `RemoveDirectoryA`) |
-| **`0x07`** | **Create Remote Directory** | `0x0040EF0A` | `0x0043DA61` | `0xA1` (`status=1`) or `0xA2` | `[0x07][path_len:u32_le][dir_path:bytes]` (calls `CreateDirectoryA`) |
-| **`0x08`** | **Delete Remote File** | `0x0040EC14` | `0x0043DBD1` | `0xA1` (`status=1`) or `0xA2` | `[0x08][path_len:u32_le][file_path:bytes]` (calls `DeleteFileA`) |
-| **`0x09`** | **Rename Remote File or Directory** | `0x0040ECE4` | `0x0043DD10` | `0xA1` (`status=1`) or `0xA2` | `[0x09][old_len:u32_le][new_len:u32_le][old_path:bytes][new_path:bytes]` (calls `MoveFileA`) |
-| **`0x0A`** | **Single File Upload Request** | `0x0040E2A7` | `0x0043DF17` | `0xA1` (`status=0x09`) or `0xA2` | `[0x0A][path_len:u32_le][file_size:u32_le][find_data:320B][dest_path:bytes]` (Section 4.2.4) |
-| **`0x0B`** | **Single File Download Request** | `0x0040DC4B` | `0x0043E4DA` | `0xA4` (or `0xA2` on error) | `[0x0B][path_len:u32_le][src_path:bytes]` |
+| **`0x06`** | **Remove Remote Directory** | `0x0040EE3A` | `0x0043D90F` | `0xA1` (`status=1`) | `[0x06][path_len:u32_le][dir_path:bytes]` (calls `RemoveDirectoryA`) |
+| **`0x07`** | **Create Remote Directory** | `0x0040EF0A` | `0x0043DA61` | `0xA1` (`status=1`) | `[0x07][path_len:u32_le][dir_path:bytes]` (calls `CreateDirectoryA`) |
+| **`0x08`** | **Delete Remote File** | `0x0040EC14` | `0x0043DBD1` | `0xA1` (`status=1`) | `[0x08][path_len:u32_le][file_path:bytes]` (calls `DeleteFileA`) |
+| **`0x09`** | **Rename Remote File or Directory** | `0x0040ECE4` | `0x0043DD10` | `0xA1` (`status=1`) | `[0x09][old_len:u32_le][new_len:u32_le][old_path:bytes][new_path:bytes]` (calls `MoveFileA`) |
+| **`0x0A`** | **Single File Upload Request** | `0x0040E2A7` | `0x0043DF17` | `0xA1` (`status=0x09`) | `[0x0A][path_len:u32_le][file_size:u32_le][find_data:320B][dest_path:bytes]` (Section 4.2.4) |
+| **`0x0B`** | **Single File Download Request** | `0x0040DC4B` | `0x0043E4DA` | `0xA4` (or `0xA1` error) | `[0x0B][path_len:u32_le][src_path:bytes]` |
 | **`0x0C`** | **Upload File Data Chunk** | `0x00443EC9` | `0x00440E41` | `0xA1` | `[0x0C][offset:u32_le][chunk_len:u32_le][data:bytes]` |
 | **`0x0D`** | **Abort Single File Upload (Delete Partial)** | `0x0040E9F8` | `0x0043E31E` | `0xA1` (`status=1`) | `[0x0D]` (1 byte; closes handle and deletes partial destination file) |
 | **`0x0E`** | **Acknowledge File Transfer Completion** | `0x0040CB5F` | `0x0043FFA6` | `0xA1` | `[0x0E]` (1 byte; sent after file streaming completes to finalize timestamps/attributes) |
@@ -157,7 +157,7 @@ Offset  Size        Type          Field
   5. At `0x0043D5F6` / `0x0043D622`, calls `0x0043FFF9` to format and transmit Server Reply **`0xA1`** with **`status = 2`** (`STATUS_ACTIVE_DIR_ACK`).
 - **Clarification:**
   > [!NOTE]
-  > Opcode `0x02` is strictly a notification command; it does **not** call `FindFirstFileA` or enumerate directory contents. Directory listing and enumeration is handled separately by Opcode `0x04` (`0x0040DB44` / `0x0043D741`), which returns 552-byte structures via Server Reply `0xA3`.
+  > Opcode `0x02` is strictly a notification command; it does **not** call `FindFirstFileA` or enumerate directory contents. Directory listing and enumeration is handled separately by Opcode `0x04` (`0x0040DB44` / `0x0043D741`) or refreshed via Opcode `0x03` (`0x0043D64D`), which return 552-byte structures via Server Reply **`0xA2`**.
 
 #### 4.2.3 `0x04` — Change / List Remote Directory (`0x0040DB44` / `0x0043D741`)
 Requests the remote host to change to the target directory and return its full directory listing. Constructed at `0x0040DB44` and handled at `0x0043D741`:
@@ -172,8 +172,9 @@ Offset  Size        Type          Field
 - **Server Behavior (`0x0043D741`):**
   1. Reads `path_len` as a 16-bit little-endian integer (`dx = word ptr [ecx]`).
   2. Copies `path_len` bytes from offset `+0x03`.
-  3. Appends wildcard (`\*.*`) and calls `_wfindfirsti64` (`0x004405AB`) and `_wfindnexti64` (or `FindFirstFileA` / `FindNextFileA`).
-  4. Formats directory entries into fixed-size 552-byte structures (`0x004400B6`) and transmits Server Reply **`0xA3`** (**Directory / Drive Listing Reply**; Section 6).
+  3. Appends wildcard (`\*.*`) and calls directory enumeration routines (`0x004401AD` / `0x004405AB`).
+  4. Transmits Server Reply **`0xA1`** with `status = 4` (`0x0043FFF9`).
+  5. Formats directory entries into fixed-size 552-byte structures (`0x00440C2D` / `0x00440C66`) and transmits Server Reply **`0xA2`** (**Directory Listing Reply**; Section 6).
 
 #### 4.2.4 `0x0A` — Single File Upload Request (`0x0040E2A7` / `0x0043DF17`)
 Initiates the upload of a single file along with its original `WIN32_FIND_DATAA` attributes, timestamps, and destination path:
@@ -191,7 +192,7 @@ Offset  Size        Type          Field
   1. Creates or opens the destination file via `CreateFileA(dest_path, GENERIC_WRITE, ...)`.
   2. Awaits incoming streaming file chunks transmitted via opcode **`0x0C`** (`Upload File Data Chunk`).
   3. Once streaming completes, receives opcode **`0x0E`** (`Acknowledge File Transfer Completion`), applies `CreationTime`, `LastAccessTime`, and `LastWriteTime` via `SetFileTime` (`0x0043DE80`), and restores file attributes via `SetFileAttributesA` (`0x0043DEA5`).
-  4. Responds with `0xA1` (`status = 0x09`) on success, or `0xA2` with `GetLastError()` on failure.
+  4. Responds with Server Reply `0xA1` (`status = 0x09`) on success, or `0xA1` error status with `GetLastError()` embedded on failure.
 
 #### 4.2.5 `0x0B` — Single File Download Request (`0x0040DC4B` / `0x0043E4DA`)
 Requests the remote peer to transmit a single file back to the initiator:
@@ -222,7 +223,7 @@ Offset  Size        Type          Field
 - **Server Behavior (`0x00440E41`):**
   1. Sets the file pointer via `SetFilePointer` to `offset`.
   2. Writes `chunk_len` bytes via `WriteFile`.
-  3. Returns `0xA1` ACK on success or `0xA2` on disk full/write failure.
+  3. Returns `0xA1` ACK on success or `0xA1` error status on disk full/write failure.
 
 #### 4.2.7 `0x16` — Extended Batch Upload Pre-Check (`0x0043F5F3`)
 Performs a pre-transfer metadata collision check for a batch of files against the peer's existing files before upload:
@@ -265,10 +266,10 @@ Server Replies are sent by `0x0043FD2D..0x00441DA8` in response to Client Comman
 
 | Opcode | Name | Server Sender VA | Client Handler VA | Payload Format (after `opcode` byte at `+0x00`) |
 | :---: | :--- | :--- | :--- | :--- |
-| **`0xA1`** | **Command Status / ACK** | `0x0043FD2D` | `0x0040BA96` | `[0xA1][status_code:u8]` (2 bytes total):<br/>`1` = Generic OK / File Does Not Exist (`0x0F`)<br/>`2` = Active Directory Notification ACK (Opcode `0x02`)<br/>`3` = File Already Exists (`0x0F` overwrite prompt)<br/>`9` = Single File Upload (`0x09`) Complete<br/>`0x0B` = Batch Upload (`0x0B`) Complete<br/>`0x10` = Mac Mode (`0x10`) ACK |
-| **`0xA2`** | **Command Error (Win32 Error Code)** | `0x0043FDC9` | `0x0040BB10` | `[0xA2][win32_error:u32_le]` (5 bytes total; e.g., `ERROR_DISK_FULL = 112`, `ERROR_ACCESS_DENIED = 5`) |
-| **`0xA3`** | **Directory / Drive Listing Reply** | `0x004400B6` | `0x0040BC20` | `[0xA3][entry_count:u32_le][entries: Entry552[entry_count]]` (`5 + 552 * entry_count` bytes; see Section 6) |
-| **`0xA4`** | **Single File Download Data Reply** | `0x00440C8B` | `0x0040BE10` | `[0xA4][file_size:u32_le][find_data:320B][file_data:bytes]` (`325 + file_size` bytes; response to `0x0A`) |
+| **`0xA1`** | **Command Status / ACK** | `0x0043FD2D` | `0x0040BA96` | `[0xA1][status_code:u8]` (2 bytes total):<br/>`1` = Generic OK / File Does Not Exist (`0x0F`)<br/>`2` = Active Directory Notification ACK (Opcode `0x02`)<br/>`3` = Directory Refresh Complete (Opcode `0x03`)<br/>`4` = Directory Change Complete (Opcode `0x04`)<br/>`9` = Single File Upload (`0x09`) Complete<br/>`0x0B` = Batch Upload (`0x0B`) Complete<br/>`0x10` = Mac Mode (`0x10`) ACK |
+| **`0xA2`** | **Directory Listing Reply** | `0x00440C2D` | `0x0040C251` | `[0xA2][entry_count:u16_le][entries: Entry552[entry_count]]` (`3 + 552 * entry_count` bytes; see Section 6) |
+| **`0xA3`** | **Sync State Confirmation** | — | `0x0040CF68` | `[0xA3][params:16B]` (4 x uint32_le synchronization/space state fields) |
+| **`0xA4`** | **Remote Logical Drives List Reply** | `0x00440FDC` | `0x0040F093` | `[0xA4][drive_count:u16_le][records: (drive_letter:char, drive_flags:u8)...]` (response to `0x01`; Section 4.2.1) |
 | **`0xA5`** | **Batch File Download Stream Reply** | `0x00441566` | `0x0040C090` | `[0xA5][file_count:u32_le][records: (path_len:u32_le, data_len:u32_le, find_data:320B, path:bytes, data:bytes)...]` |
 | **`0xA6`** | **Batch Zero-Length Files / Empty Dirs** | `0x00441602` | `0x0040CFEF` | `[0xA6][item_count:u32_le][records: (path_len:u32_le, find_data:320B, path:bytes)...]` (items with 0 data bytes during `0x0C`) |
 | **`0xA7`** | **Batch Download Complete / All-Empty** | `0x0044175A` | `0x0040D210` | `[0xA7]` (1 byte; signals end of `0x0C` batch download when no non-empty stream remains) |
@@ -278,11 +279,18 @@ Server Replies are sent by `0x0043FD2D..0x00441DA8` in response to Client Comman
 | **`0xAB`** | **Batch Unreadable Files Notification** | `0x004416AE` | `0x0040D840` | `[0xAB][failed_count:u32_le][records: (path_len:u32_le, win32_err:u32_le, path:bytes)...]` (files that failed `FindFirstFile`/`CreateFile` during `0x0C`) |
 | **`0xAC`** | **Formatted Win32 Error Strings Reply** | `0x00441CC4` | `0x0040BA16` | `[0xAC][count:u32_le][records: (err_code:u32_le, msg_len:u32_le, formatted_msg:bytes)...]` (response to `0x17` via `FormatMessageA`) |
 
+> [!CAUTION]
+> **Opcode `0xA2` Protocol Trap:**
+> Do **not** send opcode `0xA2` as an error reply. The peer dispatcher at `0x0040C251` treats byte `+0x01` as a 16-bit `entry_count` (`word ptr [edi]`) and allocates heap to unpack fixed 552-byte structures. Emitting a short error reply with opcode `0xA2` (such as `0xA2 [win32_err:u32]`) causes the peer to read 552 bytes out-of-bounds, fatally corrupting memory and terminating communication.
+
 ---
 
-## 6. 552-Byte (`0x228`) Directory & Drive Entry Structure (`0xA3`)
+## 6. 552-Byte (`0x228`) Directory Entry Structure (`0xA2`)
 
-Server Reply `0xA3` (`0x004400B6`, handled at `0x0040BC20`) returns an array of `entry_count` fixed-size **552-byte (`0x228`) structures**. This single structure represents both **logical drives/volumes** (in response to `0x01` or `0x0E`) and **files/subdirectories** (in response to `0x04`).
+Server Reply `0xA2` (`0x00440C2D`, handled at `0x0040C251`) returns an array of `entry_count` fixed-size **552-byte (`0x228`) structures** representing files and subdirectories (in response to `0x04` or `0x03`).
+
+Framing:
+`[0xA2][entry_count:uint16_le][entries: Entry552[entry_count]]` (Total length = `3 + 552 * entry_count` bytes).
 
 ```text
 Offset   Size   Type          Field Name              Description
