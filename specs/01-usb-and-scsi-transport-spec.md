@@ -264,7 +264,7 @@ and maps it to an internal 16-bit transport status code (`ax`):
 | `0x098200` | `0x09` | `0x82` | `0x00` | `0x000F` | **OTi Vendor:** Hardware Buffer Overflow / Busy |
 | `0x098300` | `0x09` | `0x83` | `0x00` | `0x0012` | **OTi Vendor:** Block Sequence / State Mismatch |
 | `0x098400` | `0x09` | `0x84` | `0x00` | `0x000D` | **OTi Vendor:** Peer Reset / Transfer Aborted (`cmd=7/8` flush triggered) |
-| `0x098500` | `0x09` | `0x85` | `0x00` | `0x0013` | **OTi Vendor:** Pipe CRC / Framing Error |
+| `0x098500` | `0x09` | `0x85` | `0x00` | `0x0013` | **OTi Vendor:** Peer Not Reading / Waiting for Peer (Bulk Write `0xD9 0x2A` pipe blocked; non-fatal retry in `0x0041C3FA`) |
 | `0x098600` | `0x09` | `0x86` | `0x00` | `0x000E` | **OTi Vendor:** Peer Mode Conflict |
 | `0x098700` | `0x09` | `0x87` | `0x00` | `0x0017` | **OTi Vendor:** Hardware FIFO Underrun |
 | `0x098800` | `0x09` | `0x88` | `0x00` | `0x0018` | **OTi Vendor:** Hardware FIFO Overrun |
@@ -334,6 +334,7 @@ Once initialized, a dedicated worker thread (`0x00433260` $\rightarrow$ `0x0041B
    + Dequeues one `65,536`-byte (`0x10000`) block from the TX queue (`[this+0x5CC]`).
    + Sends it via `0xD9 0x2A` (Bulk Pipe Write).
    + If sense code `0x000D` (`09/84/00` Peer Reset/Abort) occurs, flushes pipes (`cmd = 7`, `cmd = 8`) and aborts the burst.
+   + If sense code `0x0013` (`09/85/00` Peer Not Reading / Waiting for Peer) occurs (`0x0041C3FA`), the burst is not aborted; the state machine resets `state = 0` and returns to the poll loop for the peer to drain the FIFO.
 3. Resets `state = 0` (Poll).
 
 ### 6.3 State 2: Bulk Read (`0x0041C164`)
