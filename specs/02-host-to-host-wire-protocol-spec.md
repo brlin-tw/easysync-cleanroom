@@ -77,31 +77,36 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | Opcode | Name | Client Sender VA | Server Handler VA | Expected Reply Opcode(s) | Payload Format (after `opcode` byte at `+0x00`) |
 | :---: | :--- | :--- | :--- | :---: | :--- |
 | **`0x01`** | **Query Peer Root / Drives** | `0x0040D9C9` | `0x0043D479` | `0xA4` (and `0xA1`) | `[0x01][flags:u8][param:u16_le][path_len:u8][path:bytes]` (5 bytes total for root query; Section 4.2.1) |
-| **`0x02`** | **List Directory (`FindFirstFile`)** | `0x0040DCF0` | `0x0043D577` | `0xA3` (or `0xA2` on error) | `[0x02][path_len:u32_le][dir_path:bytes]` |
-| **`0x03`** | **Delete File** | `0x0040DDD0` | `0x0043D64D` | `0xA1` (`status=1`) or `0xA2` | `[0x03][path_len:u32_le][file_path:bytes]` |
-| **`0x04`** | **Delete Directory (Recursive)** | `0x0040DEB0` | `0x0043D741` | `0xA1` (`status=1`) or `0xA2` | `[0x04][path_len:u32_le][dir_path:bytes]` |
-| **`0x05`** | *Reserved / Unused* | — | `0x0043D42A` | — | Jump table slot `0x05` jumps to default exit |
-| **`0x06`** | **Create Directory** | `0x0040DF90` | `0x0043D90F` | `0xA1` (`status=1`) or `0xA2` | `[0x06][path_len:u32_le][dir_path:bytes]` |
-| **`0x07`** | **Rename File** | `0x0040E070` | `0x0043DA61` | `0xA1` (`status=1`) or `0xA2` | `[0x07][old_len:u32_le][new_len:u32_le][old_path:bytes][new_path:bytes]` |
-| **`0x08`** | **Rename Directory** | `0x0040E190` | `0x0043DBD1` | `0xA1` (`status=1`) or `0xA2` | `[0x08][old_len:u32_le][new_len:u32_le][old_path:bytes][new_path:bytes]` |
-| **`0x09`** | **Upload Single File to Peer** | `0x0040E2B0` | `0x0043DD10` | `0xA1` (`status=9`) or `0xA2` | `[0x09][path_len:u32_le][data_len:u32_le][find_data:320B][dest_path:bytes][file_data:bytes]` |
-| **`0x0A`** | **Download Single File from Peer** | `0x0040E4B0` | `0x0043DF17` | `0xA4` (or `0xA2` on error) | `[0x0A][path_len:u32_le][src_path:bytes]` |
-| **`0x0B`** | **Batch Upload Files/Dirs to Peer** | `0x0040E590` | `0x0043E4DA` | `0xA1` (`status=0x0B`) or `0xA9` | `[0x0B][base_dir_len:u32_le][file_count:u32_le][base_dir:bytes][records...]` (Section 4.2.2) |
-| **`0x0C`** | **Batch Download Files/Dirs from Peer** | `0x0040EAE0` | `0x00440E41` | `0xA5`, `0xA6`, `0xA7`, `0xAB` | `[0x0C][path_count:u32_le][records: (path_len:u32_le, path:bytes)...]` |
-| **`0x0D`** | **Abort / Cancel Active Transfer** | `0x0040EE10` | `0x0043E31E` | `0xA1` (`status=1`) | `[0x0D]` (1 byte; sets cancel flag `[0x0045FA78] = 1`, deletes partial temp file) |
-| **`0x0E`** | **Query Drive Free/Total Space** | `0x0040EE90` | `0x0043FFA6` | `0xA3` | `[0x0E][path_len:u32_le][root_path:bytes]` |
-| **`0x0F`** | **Pre-Check Single File Overwrite** | `0x0040EF70` | `0x0043E3B4` | `0xA1` (`1`=New, `3`=Exists) | `[0x0F][path_len:u32_le][dest_path:bytes]` |
-| **`0x10`** | **Set Peer Platform = Mac (`bMac=1`)** | — | `0x0043DC6A` | `0xA1` (`status=0x10`) | `[0x10]` (1 byte; sets `[0x0045F980] = 1`) |
+| **`0x02`** | **Verify Peer Computer Name** | `0x0040DAAD` | `0x0043D577` | `0xA1` (`status=1`) | `[0x02][name_len:u8][name:bytes]` (MBCS peer computer name; Section 4.2.2) |
+| **`0x03`** | **Query Remote Current Directory** | `0x0040DB21` | `0x0043D64D` | `0xA1` | `[0x03]` (1 byte; queries current working directory on peer) |
+| **`0x04`** | **Change / List Remote Directory** | `0x0040DB44` | `0x0043D741` | `0xA3` (or `0xA2` on error) | `[0x04][path_len:u16_le][dir_path:bytes]` (emits 552B `0xA3` listing; Section 4.2.3) |
+| **`0x05`** | **Select Remote Drive (Legacy/No-op)** | `0x0040DC28` | `0x0043D394` | — | `[0x05]` (1 byte; legacy/no-op, jumps to exit `0x0043D42A`) |
+| **`0x06`** | **Remove Remote Directory** | `0x0040EE3A` | `0x0043D90F` | `0xA1` (`status=1`) or `0xA2` | `[0x06][path_len:u32_le][dir_path:bytes]` (calls `RemoveDirectoryA`) |
+| **`0x07`** | **Create Remote Directory** | `0x0040EF0A` | `0x0043DA61` | `0xA1` (`status=1`) or `0xA2` | `[0x07][path_len:u32_le][dir_path:bytes]` (calls `CreateDirectoryA`) |
+| **`0x08`** | **Delete Remote File** | `0x0040EC14` | `0x0043DBD1` | `0xA1` (`status=1`) or `0xA2` | `[0x08][path_len:u32_le][file_path:bytes]` (calls `DeleteFileA`) |
+| **`0x09`** | **Rename Remote File or Directory** | `0x0040ECE4` | `0x0043DD10` | `0xA1` (`status=1`) or `0xA2` | `[0x09][old_len:u32_le][new_len:u32_le][old_path:bytes][new_path:bytes]` (calls `MoveFileA`) |
+| **`0x0A`** | **Single File Upload Request** | `0x0040E2A7` | `0x0043DF17` | `0xA1` (`status=0x09`) or `0xA2` | `[0x0A][path_len:u32_le][file_size:u32_le][find_data:320B][dest_path:bytes]` (Section 4.2.4) |
+| **`0x0B`** | **Single File Download Request** | `0x0040DC4B` | `0x0043E4DA` | `0xA4` (or `0xA2` on error) | `[0x0B][path_len:u32_le][src_path:bytes]` |
+| **`0x0C`** | **Upload File Data Chunk** | `0x00443EC9` | `0x00440E41` | `0xA1` | `[0x0C][offset:u32_le][chunk_len:u32_le][data:bytes]` |
+| **`0x0D`** | **Abort Single File Upload (Delete Partial)** | `0x0040E9F8` | `0x0043E31E` | `0xA1` (`status=1`) | `[0x0D]` (1 byte; closes handle and deletes partial destination file) |
+| **`0x0E`** | **Acknowledge File Transfer Completion** | `0x0040CB5F` | `0x0043FFA6` | `0xA1` | `[0x0E]` (1 byte; sent after file streaming completes to finalize timestamps/attributes) |
+| **`0x0F`** | **Cancel Single File Transfer (Keep Partial)** | `0x0040EB06` | `0x0043E3B4` | `0xA1` (`status=1`) | `[0x0F]` (1 byte; closes handle without deleting destination file) |
+| **`0x10`** | **Batch File Download Request (16-bit Count)** | `0x0040DD56` | `0x0043E781` | `0xA5`, `0xA6`, `0xA7`, `0xAB` | `[0x10][path_count:u16_le][records: (path_len:u32_le, path:bytes)...]` |
 | **`0x11`** | **Abort Batch File Transfer** | `0x0040E19F` | `0x0043E45C` | `0xA1` | `[0x11]` (1 byte) |
 | **`0x12`** | **Batch Prepare / Clear Read-Only Attributes** | `0x0040E628` | `0x0043F981` | `0xA1` | `[0x12]` (1 byte) |
 | **`0x13`** | **Batch Upload Pre-Check (Space & Conflicts)** | `0x0040E468` | `0x0043F269` | `0xA8` | `[0x13][dest_dir_len:u32_le][item_count:u32_le][dest_dir:bytes][items: (len:u32_le, rel_path:bytes)...]` |
 | **`0x14`** | **Cancel Active Packet Splitter Job** | `0x0040E60A` | `0x0043FCF8` | `0xA1` | `[0x14]` (1 byte) |
 | **`0x15`** | **Create Batch Zero-Length Files** | `0x0040E7B3` | `0x0043FB55` | `0xA1` | `[0x15]` (1 byte) |
-| **`0x16`** | **Extended Batch Upload Pre-Check** | `0x0043F5F3` | `0x0043F5F3` | `0xAA` | `[0x16][dest_dir_len:u32_le][item_count:u32_le][dest_dir:bytes][records...]` (Section 4.2.4) |
-| **`0x17`** | **Query Localized Win32 Error Strings** | `0x0040F6B1` | `0x00441AF0` | `0xAC` | `[0x17][err_count:u32_le][err_codes: u32_le[err_count]]` |
-| **`0x32`** | **Virtual NIC Mode-Switch XML (`<ExtraXmlCommand>`)** | `0x0040F730` | `0x00441DB1` | `0x32` / Mode Switch | `[0x32][xml_ascii_nul_terminated]` (Section 7.2) |
+| **`0x16`** | **Extended Batch Upload Pre-Check** | `0x0043F5F3` | `0x0043F5F3` | `0xAA` | `[0x16][dest_dir_len:u32_le][item_count:u32_le][dest_dir:bytes][records...]` (Section 4.2.5) |
+| **`0x17`** | **UI Notification Command** | `0x0040F6B1` | `0x0043D2E8` | — | `[0x17][code:u8]` (posts Win32 message `0xFC0`) |
+| **`0x32`** | **Keep-Alive / No-Op Ack 0x32** | — | `0x0043D2C1` | — | `[0x32]` (1 byte; immediate jump to exit `0x0043D42A`) |
+| **`0x33`** | **Keep-Alive / No-Op Ack 0x33** | — | `0x0043D374` | — | `[0x33]` (1 byte; immediate jump to exit `0x0043D42A`) |
 | **`0x34`** | **Dynamic Library Plugin RPC XML Tunnel (`<OTIMSG>`)** | `0x0040EFDF` | `0x0043F13D` | `0x34` | `[0x34][dll_name_len:u8][dll_name:bytes][xml_len:u32_le][xml_bytes]` (Section 7.1) |
-| **`0x33..0x39`** | **Extended XML Command Channel (`51..57`)** | `0x0040F730` | `0x00441DB1` | `0x33..0x39` | `[0x33..0x39][xml_ascii_nul_terminated]` (routed to `0x00441DB1` alongside `0x32`) |
+| **`0x35`** | **Multi-ID Batch Download Request (16-bit Count)** | `0x0040DF00` | `0x0043EB3F` | `0xA5`, `0xA6` | `[0x35][item_count:u16_le][item_ids:u32_le[item_count]]` |
+| **`0x36`** | **Multi-ID Batch Download Request (32-bit Count)** | `0x0040E05D` | `0x0043EE3E` | `0xA5`, `0xA6` | `[0x36][item_count:u32_le][item_ids:u32_le[item_count]]` |
+| **`0x37`** | **Set Remote File Attributes and Timestamps** | `0x0040F511` | `0x00441A47` | `0xA1` | `[0x37][path_len:u32_le][find_data:320B][path:bytes]` |
+| **`0x38`** | **Format Win32 Error Codes Request** | — | `0x00441B9F` | `0xAC` | `[0x38][count:u32_le][codes:u32_le[count]]` (replies `0xAC` via `0x00441CC4`) |
+| **`0x39`** | **Extra XML Control Command (`<ExtraXmlCommand>`)** | `0x0040F635` | `0x00441DB1` | `0x39` / Mode Switch | `[0x39][xml_len:u32_le][xml_bytes]` (Section 7.2) |
 
 ---
 
@@ -109,6 +114,7 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 
 #### 4.2.1 `0x01` — Query Peer Root / Drives (`0x0040D9C9` / `0x0043D479`)
 Queries the remote peer's logical drives and volumes. Constructed by the client sender at `0x0040D9C9` (formatting at `0x0040D9F8`) and handled by `0x0043D479`:
+
 ```text
 Offset  Size        Type          Field
 +0x00   1           uint8         opcode = 0x01
@@ -117,6 +123,7 @@ Offset  Size        Type          Field
 +0x04   1           uint8         path_len (0 for root drive query, or N for subpath)
 +0x05   N           bytes         path (ASCII/MBCS path on peer if path_len > 0)
 ```
+
 - **Root Query Framing:** For querying root drives/volumes, `path_len = 0` and the packet is exactly **5 bytes total**:
   `[0x01][flags:u8][param:u16_le][0x00]`
 - **Server Behavior (`0x0043D479`):**
@@ -128,53 +135,90 @@ Offset  Size        Type          Field
   > [!WARNING]
   > Opcode `0x01` is **not a 1-byte command**. Sending only 1 byte (`b"\x01"`) results in an immediate buffer underrun: the handler reads `flags`, `param`, and `path_len` out-of-bounds from whatever uninitialized bytes follow the buffer in memory, corrupting state and causing communication desynchronization.
 
-#### 4.2.2 `0x09` — Upload Single File to Peer (`0x0043DD10`)
-Uploads a single file along with its original `WIN32_FIND_DATAA` attributes and timestamps:
+#### 4.2.2 `0x02` — Verify Peer Computer Name (`0x0040DAAD` / `0x0043D577`)
+Transmits the local computer name to verify or establish peer session identity. Sent by the client sender at `0x0040DAAD` and handled at `0x0043D577`:
 
 ```text
 Offset  Size        Type          Field
-+0x00   1           uint8         opcode = 0x09
-+0x01   4           uint32_le     dest_path_len (N)
-+0x05   4           uint32_le     file_data_len (M)
-+0x09   320 (0x140) struct        WIN32_FIND_DATAA (attributes at +0, creation/access/write FILETIMEs at +4..+27)
-+0x149  N           bytes         dest_path (ASCII/MBCS path on peer, without NUL)
-+0x149+N M          bytes         raw file contents
++0x00   1           uint8         opcode = 0x02
++0x01   1           uint8         name_len (N)
++0x02   N           bytes         computer_name (ASCII/MBCS local computer name, without NUL)
 ```
 
-- **Server Behavior (`0x0043DD10`):**
-  1. Creates destination file via `CreateFileA(dest_path, GENERIC_WRITE, ...)`.
-  2. Writes `M` bytes of file contents (streaming across subsequent chunks if `total_chunks > 1`).
-  3. Restores `CreationTime`, `LastAccessTime`, and `LastWriteTime` via `SetFileTime` (`0x0043DE80`) and file attributes via `SetFileAttributesA` (`0x0043DEA5`).
-  4. Sends `0xA1` reply with `status = 0x09` on success, or `0xA2` with `GetLastError()` on failure.
+- **Server Behavior (`0x0043D577`):**
+  1. Reads `name_len` (`byte ptr [eax]`).
+  2. Allocates `name_len + 1` bytes and copies the computer name string.
+  3. Compares the name against local identity or configuration via `_mbscmp`.
+  4. Responds with Server Reply `0xA1` (`status = 1`, Generic OK) via `0x0043FFF9`.
 
-#### 4.2.3 `0x0B` — Batch Upload Files/Directories to Peer (`0x0043E4DA`)
-Uploads a batch of files and/or empty directories into a target base directory:
+#### 4.2.3 `0x04` — Change / List Remote Directory (`0x0040DB44` / `0x0043D741`)
+Requests the remote host to change to the target directory and return its full directory listing. Constructed at `0x0040DB44` and handled at `0x0043D741`:
+
+```text
+Offset  Size        Type          Field
++0x00   1           uint8         opcode = 0x04
++0x01   2           uint16_le     path_len (P)
++0x03   P           bytes         dir_path (ASCII/MBCS target directory path on peer)
+```
+
+- **Server Behavior (`0x0043D741`):**
+  1. Reads `path_len` as a 16-bit little-endian integer (`dx = word ptr [ecx]`).
+  2. Copies `path_len` bytes from offset `+0x03`.
+  3. Appends wildcard (`\*.*`) and calls `_wfindfirsti64` (`0x004405AB`) and `_wfindnexti64` (or `FindFirstFileA` / `FindNextFileA`).
+  4. Formats directory entries into fixed-size 552-byte structures (`0x004400B6`) and transmits Server Reply **`0xA3`** (**Directory / Drive Listing Reply**; Section 6).
+
+#### 4.2.4 `0x0A` — Single File Upload Request (`0x0040E2A7` / `0x0043DF17`)
+Initiates the upload of a single file along with its original `WIN32_FIND_DATAA` attributes, timestamps, and destination path:
+
+```text
+Offset  Size        Type          Field
++0x00   1           uint8         opcode = 0x0A
++0x01   4           uint32_le     dest_path_len (N)
++0x05   4           uint32_le     file_size (M)
++0x09   320 (0x140) struct        WIN32_FIND_DATAA (attributes at +0, creation/access/write FILETIMEs at +4..+27)
++0x149  N           bytes         dest_path (ASCII/MBCS target path on peer, without NUL)
+```
+
+- **Server Behavior (`0x0043DF17`):**
+  1. Creates or opens the destination file via `CreateFileA(dest_path, GENERIC_WRITE, ...)`.
+  2. Awaits incoming streaming file chunks transmitted via opcode **`0x0C`** (`Upload File Data Chunk`).
+  3. Once streaming completes, receives opcode **`0x0E`** (`Acknowledge File Transfer Completion`), applies `CreationTime`, `LastAccessTime`, and `LastWriteTime` via `SetFileTime` (`0x0043DE80`), and restores file attributes via `SetFileAttributesA` (`0x0043DEA5`).
+  4. Responds with `0xA1` (`status = 0x09`) on success, or `0xA2` with `GetLastError()` on failure.
+
+#### 4.2.5 `0x0B` — Single File Download Request (`0x0040DC4B` / `0x0043E4DA`)
+Requests the remote peer to transmit a single file back to the initiator:
 
 ```text
 Offset  Size        Type          Field
 +0x00   1           uint8         opcode = 0x0B
-+0x01   4           uint32_le     base_dir_len (B)
-+0x05   4           uint32_le     record_count (K)
-+0x09   B           bytes         base_dir_path (ASCII/MBCS)
-+0x09+B ...         records[K]    Back-to-back file/directory records
-```
-
-Each of the `K` records in `0x0B` has the layout:
-
-```text
-Record Offset  Size        Type          Field
-+0x00          4           uint32_le     rel_path_len (R)
-+0x04          4           uint32_le     file_data_len (M; 0 for directories or empty files)
-+0x08          320 (0x140) struct        WIN32_FIND_DATAA (dwFileAttributes & 0x10 != 0 indicates directory)
-+0x148         R           bytes         rel_path (appended to base_dir_path)
-+0x148+R       M           bytes         file_data (present if M > 0)
++0x01   4           uint32_le     src_path_len (N)
++0x05   N           bytes         src_path (ASCII/MBCS source path on peer)
 ```
 
 - **Server Behavior (`0x0043E4DA`):**
-    - Creates all intermediate parent directories (`0x00442610`), writes each file, restores `FILETIME` and `dwFileAttributes`, and replies with `0xA1` (`status = 0x0B`) or `0xA9` (Batch File Error Notification).
+  1. Opens the requested source file via `CreateFileA(src_path, GENERIC_READ, ...)`.
+  2. Queries file attributes and timestamps (`GetFileInformationByHandle` / `FindFirstFileA`).
+  3. Streams file metadata and contents back to the client using Server Reply **`0xA4`** (**Single File Download Data Reply**; Section 5.1).
 
-#### 4.2.4 `0x16` — Extended Batch Upload Pre-Check (`0x0043F5F3`)
+#### 4.2.6 `0x0C` — Upload File Data Chunk (`0x00443EC9` / `0x00440E41`)
+Streams an offset slice of binary data for an in-flight file upload:
+
+```text
+Offset  Size        Type          Field
++0x00   1           uint8         opcode = 0x0C
++0x01   4           uint32_le     offset (byte offset in destination file)
++0x05   4           uint32_le     chunk_len (C)
++0x09   C           bytes         chunk_data
+```
+
+- **Server Behavior (`0x00440E41`):**
+  1. Sets the file pointer via `SetFilePointer` to `offset`.
+  2. Writes `chunk_len` bytes via `WriteFile`.
+  3. Returns `0xA1` ACK on success or `0xA2` on disk full/write failure.
+
+#### 4.2.7 `0x16` — Extended Batch Upload Pre-Check (`0x0043F5F3`)
 Performs a pre-transfer metadata collision check for a batch of files against the peer's existing files before upload:
+
 ```text
 Offset  Size        Type          Field
 +0x00   1           uint8         opcode = 0x16
@@ -183,13 +227,16 @@ Offset  Size        Type          Field
 +0x09   D           bytes         dest_dir (ASCII/MBCS target directory on peer)
 +0x09+D ...         records[K]    Back-to-back file metadata pre-check records
 ```
+
 Each of the `K` records has the layout:
+
 ```text
 Record Offset  Size        Type          Field
 +0x00          4           uint32_le     rel_path_len (R)
 +0x04          320 (0x140) struct        WIN32_FIND_DATAA (source file attributes, size, and timestamps)
 +0x144         R           bytes         rel_path (relative path under dest_dir)
 ```
+
 - **Server Behavior (`0x0043F5F3`):**
   1. Dispatched from Client Command Dispatcher `0x0043D181` via `0x0043D2DE..0x0043D310`.
   2. Reads `dest_dir` and iterates through all `item_count` records.
@@ -262,7 +309,7 @@ Offset   Size   Type          Field Name              Description
 > [!IMPORTANT]
 > **No XML Handshake in Standard File Transfer:**
 > Disassembly of `EasySuite.exe` reveals that standard file manager operations do **not** exchange an XML handshake upon link connection. As soon as both sides enter Transfer Line Mode (`0xD8 0x01` `op_type=5, param=0x007F`), both hosts immediately transition to the connected state (status bar `"Connected"`, ID `0xF026`) and issue Client Command **`0x01`** (**Query Peer Root / Drives**) using the 5-byte structure described in Section 4.2.1.
-> 
+>
 > Furthermore, Opcode **`0x16` is NOT an XML control channel**; it is the **Extended Batch Upload Pre-Check** command (`0x0043F5F3`, Section 4.2.4). Framing `<OTIMSG>` ASCII XML with opcode `0x16` causes `EasySuite.exe` to interpret the first 4 ASCII bytes `b"<OTI"` (`0x49544F3C` = ~1.23 billion) as a 32-bit count, resulting in an immediate crash in `ntdll!RtlFreeHeap`.
 
 #### Architecture & RPC Dispatch
@@ -272,6 +319,7 @@ In `EasySuite.exe`, `<OTIMSG>` XML messages are used exclusively for inter-host 
 3. **Parser (`0x00420D71`):** The XML parser searches for root tag `<OTIMSG>` and command tags `<DynamicLibCmd>` and `<TransferFile>`.
 
 #### Recognized Tags & XML Schema
+
 ```xml
 <OTIMSG>
     <DynamicLibCmd>COMMAND_NAME</DynamicLibCmd>
@@ -295,8 +343,22 @@ In `EasySuite.exe`, `<OTIMSG>` XML messages are used exclusively for inter-host 
 | `<DataCounter>` / `<AllDataCounter>` | Progress and record counters during synchronization. |
 | `<DriveListData>` | Logical drive list payload tunneled to plugin components. |
 
-### 7.2 `<ExtraXmlCommand>` Virtual NIC Mode-Switch Protocol (Opcode `0x32`, `0x00441DB1`)
-When the user clicks the **Virtual Network** button or selects **Switch EasySync to Virtual Network** (`Menu ID 32789`), `EasySuite.exe` sends opcode `0x32` containing a NUL-terminated XML string with root tag `<ExtraXmlCommand>...</ExtraXmlCommand>`:
+### 7.2 `<ExtraXmlCommand>` Virtual NIC Mode-Switch & Control Protocol (Opcode `0x39`, `0x0040F635` / `0x00441DB1`)
+
+When the user clicks the **Virtual Network** button or selects **Switch EasySync to Virtual Network** (`Menu ID 32789`), or when exchanging extended environment configurations (such as `LocalLibraryInformation`), `EasySuite.exe` sends Client Command **`0x39`** (`0x0040F635`) formatted with a 32-bit little-endian length prefix:
+
+```text
+Offset  Size        Type          Field
++0x00   1           uint8         opcode = 0x39
++0x01   4           uint32_le     xml_len (X)
++0x05   X           bytes         xml_bytes (ASCII/UTF-8 XML with root <ExtraXmlCommand>)
+```
+
+The receiving server handler at `0x00441DB1` reads `xml_len`, allocates `xml_len + 1` bytes for NUL termination, copies the payload, and dispatches the XML commands.
+
+> [!NOTE]
+> **Opcodes `0x32` and `0x33` are Keep-Alive / No-Op Frames:**
+> Disassembly of the dispatcher at `0x0043D2C1` (for `0x32`) and `0x0043D374` (for `0x33`) proves that neither opcode processes an XML payload. Both opcodes immediately jump to exit `0x0043D42A` and serve as 1-byte keep-alive or ping/ack signals. All `<ExtraXmlCommand>` XML data is carried exclusively over opcode **`0x39`**.
 
 | Command Token Inside `<ExtraXmlCommand>` | Direction | Meaning & Handler Action (`0x00441DB1`) |
 | :--- | :---: | :--- |

@@ -48,21 +48,21 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 | Top-Level Menu | Item Label | Command ID | Shortcut / Action |
 | :--- | :--- | :---: | :--- |
 | **`&File`** | `&Open` | `32779` | Open selected file (local) or folder (local/remote) |
-| | `&Delete` | `32776` | Delete selected files/folders (`DeleteFile` / `0x03` / `0x04`) |
-| | `&Rename` | `32778` | Rename selected file/folder (`MoveFile` / `0x07` / `0x08`) |
-| | `&New Folder` | `32777` | Open Dialog `134` and create directory (`CreateDirectory` / `0x06`) |
+| | `&Delete` | `32776` | Delete selected files/folders (`DeleteFile` / `0x08` for files, `RemoveDirectory` / `0x06` for folders) |
+| | `&Rename` | `32778` | Rename selected file/folder (`MoveFile` / `0x09`) |
+| | `&New Folder` | `32777` | Open Dialog `134` and create directory (`CreateDirectory` / `0x07`) |
 | | `E&xit` | `32788` | Reset bridge to idle mode (`cmd=5, val=0`), stop worker threads, and quit |
 | **`&Edit`** | `&Copy` | `57634` | Copy selected items in active pane to clipboard / transfer selection |
-| | `&Paste` | `57637` | Paste / initiate transfer from opposite pane (`0x09`/`0x0A`/`0x0B`/`0x0C`) |
+| | `&Paste` | `57637` | Paste / initiate transfer from opposite pane (`0x0A`/`0x0B`/`0x0C`/`0x0E`) |
 | | `Select &All` | `32771` | Select all items in active file list |
 | | `&Invert Selection` | `32772` | Invert selection in active file list |
 | **`&View`** | `Lar&ge Icons` | `32780` | Switch list view to large icon mode |
 | | `S&mall Icons` | `32781` | Switch list view to small icon mode |
 | | `&List` | `32782` | Switch list view to compact list mode |
 | | `&Details` | `32783` | Switch list view to report/details mode (default) |
-| | `&Refresh` | `32775` | Re-query current local and remote directories (`0x01` / `0x02`) |
+| | `&Refresh` | `32775` | Re-query current local and remote directories (`0x01` / `0x04`) |
 | **`&Tool`** | `&Option` | `32787` | Open `EasySync Setup` Dialog (`155`) |
-| | `Switch EasySync to &Virtual Network` | `32789` | Open `Network Option` Dialog (`188`) and initiate Virtual NIC mode switch (`0x32`) |
+| | `Switch EasySync to &Virtual Network` | `32789` | Open `Network Option` Dialog (`188`) and initiate Virtual NIC mode switch (`0x39`) |
 | **`&Help`** | `&About EasySync...` | `57664` | Open `About EasySync` Dialog (`174`) |
 
 ### 2.2 Context & Auxiliary Menus (`129`, `136`, `156`, `157`, `483`)
@@ -84,12 +84,12 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 | Dialog ID | Title | Key Controls & IDs | Functional Behavior |
 | :---: | :--- | :--- | :--- |
 | **`128`** | *(Main View)* | `1005` (`Tree1`), `1006` (`List2`), `1014..1019` (USB/Status Lamps), `1047` (`Virtual Network` button) | Embedded form view inside main frame window. Supports drag-and-drop and toolbar-driven file transfers between local and remote panes. |
-| **`131`** | `Progress Information` | `1007` (Source path label), `1008` (Dest path label), `1009` (`Progress1` bar), `2` (`Cancel` button) | Modal/modeless transfer dialog displayed during single or batch file transfers (`0x09..0x0C`). Clicking `Cancel` (`2`) sends Client Command `0x0D` (`Abort Transfer`) and deletes the incomplete target file. |
-| **`133`** | `Confirm Replace File` | `1` (`&Yes`), `1010` (`Yes to &All`), `2` (`&No`), `1011` (`&Cancel`), `1012`/`1013` (Existing vs. New file size & modified date labels) | Shown when single pre-check (`0x0F` $\rightarrow$ `0xA1 status=3`) or batch pre-check (`0x14`/`0x15` $\rightarrow$ `0xA8`/`0xAA`) detects an existing destination file. Displays `"This folder already contains a file named '%s'"` (`0xF052`) and compares sizes/dates (`0xF053`). |
+| **`131`** | `Progress Information` | `1007` (Source path label), `1008` (Dest path label), `1009` (`Progress1` bar), `2` (`Cancel` button) | Modal/modeless transfer dialog displayed during single or batch file transfers (`0x0A..0x0E`). Clicking `Cancel` (`2`) sends Client Command `0x0D` (`Abort Single File Upload`) or `0x11` (`Abort Batch File Transfer`) and deletes the incomplete target file. |
+| **`133`** | `Confirm Replace File` | `1` (`&Yes`), `1010` (`Yes to &All`), `2` (`&No`), `1011` (`&Cancel`), `1012`/`1013` (Existing vs. New file size & modified date labels) | Shown when single pre-check (`0x0F` $\rightarrow$ `0xA1 status=3`) or batch pre-check (`0x13`/`0x16` $\rightarrow$ `0xA8`/`0xAA`) detects an existing destination file. Displays `"This folder already contains a file named '%s'"` (`0xF052`) and compares sizes/dates (`0xF053`). |
 | **`134`** | `Input Name` / `Input Network Password` | `1000` (Edit box), `1` (`OK`), `2` (`Cancel`), `1027` (Prompt label) | Reused for creating a new folder (`32777`) and entering an optional password. |
 | **`155`** | `EasySync Setup` | `1028` (`Enable Saving Function` checkbox), `1029` (Backing file path edit), `1030` (`Browse` button), `1` (`OK`), `2` (`Cancel`) | Configures the local backing file (`[this+0x654]`) used to service Virtual Disk Sector Read/Write requests (`action_code 2` and `3` via `0xDA 0x2A` / `0xDA 0x28`). |
 | **`174`** | `About EasySync` | `1037` (`EasySync Version`), `1038` (`Driver Version`), `1` (`OK`) | Displays application version (`4.1.272.5` / `1.1.67.24`) and copyright notice. |
-| **`188`** | `Network Option` | `1044` (Radio: `"Enable Internet Connection Sharing (Router)"`), `1045` (Radio: `"Standard Peer-to-Peer Virtual Network"`), `1` (`OK`), `2` (`Cancel`) | Prompts the user before sending `PleaseSwitchAsVirtualNIC` (`0x32`). Selecting Router mode sends `MeSwitchAsRouter` and launches `nicinst.exe IS`; selecting non-router sends `MeSwitchAsNoneRouter` and launches `nicinst.exe I`. |
+| **`188`** | `Network Option` | `1044` (Radio: `"Enable Internet Connection Sharing (Router)"`), `1045` (Radio: `"Standard Peer-to-Peer Virtual Network"`), `1` (`OK`), `2` (`Cancel`) | Prompts the user before sending `PleaseSwitchAsVirtualNIC` (`0x39`). Selecting Router mode sends `MeSwitchAsRouter` and launches `nicinst.exe IS`; selecting non-router sends `MeSwitchAsNoneRouter` and launches `nicinst.exe I`. |
 
 ---
 
@@ -101,29 +101,33 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 3. Populate the **Local Host** pane immediately using native OS filesystem APIs (`GetLogicalDriveStrings`, `FindFirstFile`, `GetDiskFreeSpaceEx`).
 4. While the remote peer is disconnected (`op_type=5` returns `0x0000`), display `"Disconnected"` (`0xF027`) in the status bar and disable remote file operations.
 5. As soon as `op_type=5` returns `0x007F`, both hosts immediately transition to the connected state without exchanging an XML handshake, update status bar to `"Connected"` (`0xF026`), and automatically issue Client Command `0x01` (**Query Peer Root / Drives**) using the 5-byte payload `[0x01][flags:u8][param:u16_le][path_len=0:u8]` to populate the **Remote Host** pane.
+6. The client optionally transmits `0x02` (**Verify Peer Computer Name**) with its local NetBIOS/computer name to authenticate or link sessions with the peer.
 
 ### 4.2 Single File Upload (`Local -> Remote`)
-1. **Free Space Check:** Query cached volume free space (or send `0x0E` **Query Drive Space**). If `file_size > remote_free_bytes`, abort and display `"Disk is full"` (`0xF038`).
+1. **Free Space Check:** Query cached volume free space (or send `0x0E` **Acknowledge File Transfer Completion** / cached drive space). If `file_size > remote_free_bytes`, abort and display `"Disk is full"` (`0xF038`).
 2. **Overwrite Pre-Check:** Send `0x0F` (`[0x0F][dest_len][dest_path]`).
    + Wait for `0xA1`:
      - If `status == 1` (Does not exist): proceed.
      - If `status == 3` (Already exists): show Dialog `133` (`Confirm Replace File`). If user selects `No` or `Cancel`, abort.
-3. **Upload Execution:** Send `0x09` (`[0x09][dest_len][file_size][WIN32_FIND_DATAA:320B][dest_path][file_data...]`).
+3. **Upload Initiation & Streaming:**
+   + Send `0x0A` (`[0x0A][dest_len:u32_le][file_size:u32_le][WIN32_FIND_DATAA:320B][dest_path]`).
+   + Stream file contents across subsequent 64 KB blocks using `0x0C` (`[0x0C][offset:u32_le][chunk_len:u32_le][chunk_data]`).
+   + Send `0x0E` (`[0x0E]`) to commit timestamps and file attributes.
    + Update Dialog `131` (`Progress Information`) after each 64 KB bulk block.
    + Wait for `0xA1` (`status == 9`) or `0xA2` (Win32 error code).
-4. **Refresh:** Re-issue `0x02` (**List Directory**) on the target remote folder to update the UI.
+4. **Refresh:** Re-issue `0x04` (**Change / List Remote Directory**) on the target remote folder to update the UI.
 
 ### 4.3 Batch Upload (`Local -> Remote`, Multiple Files & Subdirectories)
 1. Recursively enumerate all selected local files and directories to compute total byte count and relative paths.
-2. **Batch Overwrite Pre-Check:** Send `0x15` (**Extended Batch Pre-Check**) or `0x14` (**Batch Pre-Check**) containing the target base directory and all relative paths.
+2. **Batch Overwrite Pre-Check:** Send `0x16` (**Extended Batch Pre-Check**) or `0x13` (**Batch Pre-Check**) containing the target base directory and all relative paths.
 3. Receive `0xAA` (or `0xA8`) listing only the conflicting files that already exist on the remote peer.
 4. Iterate through conflicting items with Dialog `133` (`Yes`, `Yes to All`, `No`, `Cancel`) to filter the upload list.
-5. Send `0x0B` (**Batch Upload**) with the approved records and stream all chunks to the peer.
-6. Wait for `0xA1` (`status == 0x0B`) or `0xA9` (Batch Error). If an unfamiliar Win32 error code is returned, optionally send `0x17` (**Query Localized Error Strings**) and display the peer's `0xAC` formatted error message.
+5. Send file and directory records, create remote directories via `0x07` (`CreateDirectory`), and stream file chunks via `0x0C`.
+6. Wait for `0xA1` (`status == 0x0B`) or `0xA9` (Batch Error). If an unfamiliar Win32 error code is returned, optionally send `0x38` (**Format Win32 Error Codes**) and display the peer's `0xAC` formatted error message.
 
 ### 4.4 Single & Batch Download (`Remote -> Local`)
-1. For a single file, check local overwrite (`Confirm Replace File` Dialog `133`), then send `0x0A` (**Download Single File**) and stream the incoming `0xA4` payload to the local file, applying the 320-byte `WIN32_FIND_DATAA` timestamps and attributes upon completion.
-2. For a batch selection (multiple files or folders), send `0x0C` (**Batch Download**). The remote peer expands subdirectories recursively and sends:
+1. For a single file, check local overwrite (`Confirm Replace File` Dialog `133`), then send `0x0B` (**Single File Download Request**) and stream the incoming `0xA4` payload to the local file, applying the 320-byte `WIN32_FIND_DATAA` timestamps and attributes upon completion.
+2. For a batch selection (multiple files or folders), send `0x10` (**Batch File Download Request**) or `0x35`/`0x36`. The remote peer expands subdirectories recursively and sends:
    + `0xAB` if any files could not be opened/statted,
    + `0xA6` for all zero-length files and empty directories (created immediately on the local disk),
    + `0xA5` streaming all non-empty files (written sequentially to disk with progress updates), or `0xA7` if all items in the batch were empty.

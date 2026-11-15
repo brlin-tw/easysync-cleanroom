@@ -25,18 +25,18 @@ sequenceDiagram
 
     Note over HostA,HostB: Both hosts initially in Transfer Line Mode (0x007F)
     HostA->>HostA: User opens Dialog 188 ("Network Option")<br/>Selects Router (IS) or Standard (I)
-    HostA->>HostB: Opcode 0x32: <ExtraXmlCommand>PleaseSwitchAsVirtualNIC...</ExtraXmlCommand>
+    HostA->>HostB: Opcode 0x39: <ExtraXmlCommand>PleaseSwitchAsVirtualNIC...</ExtraXmlCommand>
     HostB->>HostB: Prompts user: "Sure to switch as Virtual Network?" (0xF09D)
     alt User on Host B Accepts
-        HostB-->>HostA: Opcode 0x32: <ExtraXmlCommand>Accept / Ready</ExtraXmlCommand>
-        HostA->>HostB: Opcode 0x32: <ExtraXmlCommand>MeSwitchAsRouter (or MeSwitchAsNoneRouter)</ExtraXmlCommand>
+        HostB-->>HostA: Opcode 0x39: <ExtraXmlCommand>Accept / Ready</ExtraXmlCommand>
+        HostA->>HostB: Opcode 0x39: <ExtraXmlCommand>MeSwitchAsRouter (or MeSwitchAsNoneRouter)</ExtraXmlCommand>
         HostA->>Bridge: CDB 0xD8 0x01 (cmd=5, val=0x0000: Leave Transfer Line Mode)
         HostB->>Bridge: CDB 0xD8 0x01 (cmd=5, val=0x0000: Leave Transfer Line Mode)
         HostA->>Bridge: Virtual NIC Init: CDB 0xD8 0x01 (cmd=5, val=0x0044)
         HostB->>Bridge: Virtual NIC Init: CDB 0xD8 0x01 (cmd=5, val=0x0044)
         Note over HostA,HostB: Both hosts exchange 0x8A00-byte Ethernet batches (opcode 0xFF)
     else User on Host B Declines or Busy
-        HostB-->>HostA: Opcode 0x32: <ExtraXmlCommand>RejectSwitchAsVirtualNIC</ExtraXmlCommand>
+        HostB-->>HostA: Opcode 0x39: <ExtraXmlCommand>RejectSwitchAsVirtualNIC</ExtraXmlCommand>
         HostA->>HostA: Displays "Remote user reject to switch as Virtual Network!" (0xF09F)
     end
 ```
