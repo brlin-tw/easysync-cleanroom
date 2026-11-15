@@ -85,12 +85,12 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | **`0x07`** | **Create Remote Directory** | `0x0040EF0A` | `0x0043DA61` | `0xA1` (`status=0`) | `[0x07][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `CreateDirectoryW`, replies 24B `0xA1`) |
 | **`0x08`** | **Delete Remote File** | `0x0040EC14` | `0x0043DBD1` | `0xA1` (`status=0` or `1`) | `[0x08][req_id:u32_le][path_len:u16_le][file_path:wchar_t]` (calls `DeleteFileW`, replies 24B `0xA1`) |
 | **`0x09`** | **Rename Remote File or Directory** | `0x0040ECE4` | `0x0043DD10` | `0xA1` (`status=0`) | `[0x09][req_id:u32_le][old_len:u16_le][new_len:u16_le][old_path:wchar_t][new_path:wchar_t]` (calls `MoveFileW`, replies 24B `0xA1`) |
-| **`0x0A`** | **Single File Upload Request** | `0x0040E2A7` | `0x0043DF17` | `0xA1` (`status=0`) | `[0x0A][req_id:u32_le][dest_len:u16_le][file_size:u32_le][find_data:320B][dest_path:wchar_t]` (Section 4.2.4) |
+| **`0x0A`** | **Single File Upload Request** | `0x0040E2A7` | `0x0043DF17` | `0xA1` (`status=0..7`) | `[0x0A][flags:u8][req_id:u32_le][file_size:u64_le][dest_path_len:u16_le][dest_path:wchar_t]` (16B header + UTF-16LE path; Section 4.2.4) |
 | **`0x0B`** | **Single File Download Request** | `0x0040DC4B` | `0x0043E4DA` | `0xA3` (or `0xA1` error) | `[0x0B][req_id:u32_le][src_len:u16_le][src_path:wchar_t]` |
-| **`0x0C`** | **Upload File Data Chunk** | `0x00443EC9` | `0x00440E41` | `0xA1` | `[0x0C][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][data_len:u32_le][data:bytes]` (Section 4.2.6) |
-| **`0x0D`** | **Abort Single File Upload (Delete Partial)** | `0x0040E9F8` | `0x0043E31E` | `0xA1` | `[0x0D]` (1 byte; closes handle and deletes partial destination file) |
-| **`0x0E`** | **Acknowledge File Transfer Completion** | `0x0040CB5F` | `0x0043FFA6` | `0xA1` | `[0x0E]` (1 byte; sent after file streaming completes to finalize timestamps/attributes) |
-| **`0x0F`** | **Cancel Single File Transfer (Keep Partial)** | `0x0040EB06` | `0x0043E3B4` | `0xA1` | `[0x0F]` (1 byte; closes handle without deleting destination file) |
+| **`0x0C`** | **Upload File Data Chunk** | `0x00443EC9` | `0x00440E41` | `0xA5` (or `0xA9`) | `[0x0C][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][chunk_len:u32_le][data:bytes]` (Section 4.2.6) |
+| **`0x0D`** | **Abort Single File Upload (Delete Partial)** | `0x0040E9F8` | `0x0043E31E` | — | `[0x0D][item_id:u32_le][status:u32_le]` (9 bytes; closes handle and deletes partial destination file) |
+| **`0x0E`** | **Acknowledge File Transfer Completion** | `0x0040CB5F` | `0x0043FFA6` | — | `[0x0E][item_id:u32_le][status:u16_le]` (7 bytes; sent after file streaming completes to finalize timestamps/attributes) |
+| **`0x0F`** | **Cancel Single File Transfer (Keep Partial)** | `0x0040EB06` | `0x0043E3B4` | — | `[0x0F][item_id:u32_le][status:u32_le]` (9 bytes; closes handle without deleting destination file) |
 | **`0x10`** | **Batch File Download Request (16-bit Count)** | `0x0040DD56` | `0x0043E781` | `0xA3`, `0xA7` | `[0x10][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (replies with `0xA3` chunks, ended by `0xA7`) |
 | **`0x11`** | **Abort Batch File Transfer** | `0x0040E19F` | `0x0043E45C` | `0xA1` | `[0x11]` (1 byte) |
 | **`0x12`** | **Batch Prepare / Clear Read-Only Attributes** | `0x0040E628` | `0x0043F981` | `0xA1` | `[0x12][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` |
@@ -178,23 +178,40 @@ Offset  Size        Type          Field
   6. If `FindFirstFileW` fails (e.g. empty optical/removable drive returning `21` `ERROR_NOT_READY`, path not found, or access denied), transmits Server Reply **`0xA1`** (`status = 1`, `win32_error = GetLastError()`) and **terminates processing without sending `0xA2`**. Clients must inspect `status` in `0xA1` and abort waiting for `0xA2` if `status != 0`.
 
 #### 4.2.4 `0x0A` — Single File Upload Request (`0x0040E2A7` / `0x0043DF17`)
-Initiates the upload of a single file along with its destination path:
+Initiates the upload of a single file along with its destination path and target size. The client transmits a 16-byte fixed header followed by the UTF-16LE destination path:
 
 ```text
 Offset  Size        Type          Field
 +0x00   1           uint8         opcode = 0x0A
-+0x01   4           uint32_le     req_id (Transaction sequence ID)
-+0x05   2           uint16_le     dest_path_len (N, byte length of dest_path)
-+0x07   4           uint32_le     file_size (M)
-+0x0B   320 (0x140) struct        WIN32_FIND_DATAA (source timestamps and attributes)
-+0x14B  N           bytes         dest_path (UTF-16LE wchar_t destination path on peer)
++0x01   1           uint8         flags (0x00 = normal / prompt on conflict, 0x01 = overwrite)
++0x02   4           uint32_le     req_id (Client transaction sequence ID)
++0x06   8           uint64_le     file_size (Contiguous 64-bit integer: low 32 bits at +0x06, high 32 bits at +0x0A)
++0x0E   2           uint16_le     dest_path_len (N, byte length of dest_path in UTF-16LE, i.e. 2 * wchar count)
++0x10   N           wchar_t[]     dest_path (UTF-16LE wchar_t destination path INCLUDING target filename)
 ```
 
+- **Wire Layout Details:**
+  Total packet length is `16 + dest_path_len` bytes. There is **no** embedded `WIN32_FIND_DATAA` structure in this command.
 - **Server Behavior (`0x0043DF17`):**
-  1. Creates or opens the destination file via `CreateFileW(dest_path, GENERIC_WRITE, ...)`.
-  2. Awaits incoming streaming file chunks transmitted via opcode **`0x0C`** (`Upload File Data Chunk`).
-  3. Once streaming completes, receives opcode **`0x0E`** (`Acknowledge File Transfer Completion`), applies `CreationTime`, `LastAccessTime`, and `LastWriteTime` via `SetFileTime` (`0x0043DE80`), and restores file attributes via `SetFileAttributesW` (`0x0043DEA5`).
-  4. Responds with Server Reply `0xA1` (24-byte structured ACK with `status = 0` on success, or `status = 1` and `win32_error = GetLastError()` on failure).
+  1. Unpacks `flags` (`payload[0]`), `req_id` (`payload[1..4]`), `file_size` (`payload[5..12]`), `dest_path_len` (`payload[13..14]`), and copies `dest_path` starting at `payload[15]` (`+0x10` from packet start).
+  2. Converts `dest_path` to local character encoding via `WideCharToMultiByte` and normalizes separators.
+  3. Inspects destination file state via `GetFileAttributesEx`:
+     - If the destination path already exists and `flags == 0` (no overwrite), immediately transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 2`, `req_id = req_id`) and terminates transfer initiation.
+  4. Checks target volume available free space via `GetDiskFreeSpaceEx`:
+     - If available free bytes are less than `file_size`, immediately transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 6`, `req_id = req_id`) and aborts transfer.
+  5. If `file_size == 0` (zero-length file), creates the file directly, applies empty sizing, and transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 7`, `req_id = req_id`). The file transfer is complete; no `0x0C` chunks are required.
+  6. If `file_size > 0`, creates or opens the destination file handle for writing (`CFile::Open` with `modeCreate | modeWrite`):
+     - If creation fails (e.g. invalid path, path is a directory, access denied), transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 1`, `win32_error = GetLastError()`).
+     - If creation succeeds, transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 0`, `req_id = req_id`) and registers the open file context to await incoming streaming chunks via opcode **`0x0C`** (`Upload File Data Chunk`).
+
+> [!CAUTION]
+> **Stack Buffer Overflow in EasySuite (`0x0043DF17`):**
+> In `EasySuite.exe`, `0x0043DF17` unpacks `dest_path` into a fixed 1024-byte (`0x400`) stack buffer using an unbounded `memcpy` of `dest_path_len` bytes.
+> Transmitting an oversized packet (such as bundling file contents directly into `0x0A`) or sending a corrupted packet where `dest_path_len > 1024` overflows the stack buffer and corrupts the SEH exception handler, instantly crashing `EasySuite.exe` with an Access Violation (`0xC0000005`). Because the server process terminates, no `0xA1` reply is sent, and the OTi-2108 link falls idle (`action_code = 1`). Clean-room implementations MUST ensure `dest_path_len` does not exceed 1024 bytes (512 WCHARs).
+
+> [!IMPORTANT]
+> **Target Path Must Include Filename:**
+> Opcode `0x0A` requires the full destination file path including the target filename (e.g. `C:\Windows\Temp\README.md`). Supplying only a directory path (e.g. `C:\Windows\Temp\`) causes `CFile::Open` to fail with Win32 error `5` (`ERROR_ACCESS_DENIED`), resulting in `0xA1` failure (`status = 1`).
 
 #### 4.2.5 `0x0B` — Single File Download Request (`0x0040DC4B` / `0x0043E4DA`)
 Requests the remote peer to transmit a single file back to the initiator:
@@ -227,7 +244,8 @@ Offset  Size        Type          Field
 
 - **Server Behavior (`0x00440E41`):**
   1. Writes `chunk_len` bytes via `WriteFile` at sequential offset.
-  2. Acknowledges with 24-byte Server Reply `0xA1` (`req_opcode = 0x0C`, `status = 0` on success, or `status = 1` with `win32_error = GetLastError()` on disk full/write failure).
+  2. If write succeeds, acknowledges with 9-byte Server Reply **`0xA5`** (`[0xA5][item_id:u32_le][chunk_index:u32_le]`, generated by `0x0043FE85` and handled by `0x0040D7D2`).
+  3. If write fails (e.g. disk full), notifies client with Server Reply **`0xA9`** (**Batch Upload Error Notification**, generated by `0x004417A0`).
 
 #### 4.2.7 `0x16` — Extended Batch Upload Pre-Check (`0x0043F5F3`)
 Performs a pre-transfer metadata collision check for a batch of files against the peer's existing files before upload:
@@ -274,7 +292,7 @@ Server Replies are sent by `0x0043FD2D..0x00441DA8` in response to Client Comman
 | **`0xA2`** | **Directory Listing Reply** | `0x00440C2D` | `0x0040C251` | `[0xA2][entry_count:u16_le][entries: Entry552[entry_count]]` (`3 + 552 * entry_count` bytes; see Section 6) |
 | **`0xA3`** | **File Download Data Chunk** | `0x00441566` | `0x0040CF68` | `[0xA3][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][data_len:u32_le][file_data:bytes]` (Streaming file content chunks for download requests via `0x10` / `0x0B`) |
 | **`0xA4`** | **Remote Logical Drives List Reply** | `0x00440FDC` | `0x0040F093` | `[0xA4][drive_count:u16_le][records: (drive_letter:char, drive_type:u8)...]` (response to `0x01`; Section 4.2.1) |
-| **`0xA5`** | **Batch File Download Stream Reply** | `0x00441566` | `0x0040C090` | `[0xA5][file_count:u32_le][records: (path_len:u32_le, data_len:u32_le, find_data:320B, path:bytes, data:bytes)...]` |
+| **`0xA5`** | **Upload File Data Chunk ACK** | `0x0043FE85` | `0x0040D7D2` | `[0xA5][item_id:u32_le][chunk_index:u32_le]` (9 bytes total; acknowledges each `0x0C` data chunk; Section 4.2.6) |
 | **`0xA6`** | **Batch Zero-Length Files / Empty Dirs** | `0x00441602` | `0x0040CFEF` | `[0xA6][item_count:u32_le][records: (path_len:u32_le, find_data:320B, path:bytes)...]` (items with 0 data bytes during `0x0C`) |
 | **`0xA7`** | **Batch Download Complete ACK** | `0x0044175A` | `0x0040D210` | `[0xA7][req_id:u32_le][status:u16_le]` (7 bytes total; signals end of `0x10` batch download) |
 | **`0xA8`** | **Batch Upload Pre-Check Reply** | `0x004418C9` | `0x0040D290` | `[0xA8][subcode:u8][status:u8][flags:u16_le][req_id:u32_le][param:u32_le]` (13 bytes total; response to `0x13`) |

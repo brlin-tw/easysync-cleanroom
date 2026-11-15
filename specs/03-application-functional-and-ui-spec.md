@@ -104,17 +104,20 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 6. When the user navigates directories or to synchronize active folder state with the peer, the host issues opcode `0x02` (**Notify / Set Active Remote Directory**) with `[0x02][path_len:u8][dir_path:bytes]`, to which the peer acknowledges with Server Reply `0xA1` (24-byte structured ACK, `status = 0`) and posts UI message `0xFBD`.
 
 ### 4.2 Single File Upload (`Local -> Remote`)
-1. **Free Space Check:** Query cached volume free space (or send `0x0E` **Acknowledge File Transfer Completion** / cached drive space). If `file_size > remote_free_bytes`, abort and display `"Disk is full"` (`0xF038`).
-2. **Overwrite Pre-Check:** Send `0x0F` (`[0x0F][dest_len][dest_path]`).
-   + Wait for `0xA1`:
-     - If `status == 0` (Does not exist): proceed.
-     - If `status == 1` (Already exists): show Dialog `133` (`Confirm Replace File`). If user selects `No` or `Cancel`, abort.
-3. **Upload Initiation & Streaming:**
-   + Send `0x0A` (`[0x0A][req_id:u32_le][dest_len:u16_le][file_size:u32_le][WIN32_FIND_DATAA:320B][dest_path:wchar_t]`).
-   + Stream file contents across subsequent 64 KB blocks using `0x0C` (`[0x0C][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][chunk_len:u32_le][chunk_data]`).
-   + Send `0x0E` (`[0x0E]`) to commit timestamps and file attributes via `0x37`.
-   + Update Dialog `131` (`Progress Information`) after each 64 KB bulk block.
-   + Wait for `0xA1` (`status == 0` on success, or `status == 1` failure status code with `win32_error`).
+1. **Free Space & Overwrite Pre-Check:** Pre-checks can be handled inline via `0x0A` (or pre-checked via `0x0F` / cached volume space).
+2. **Upload Initiation & Reservation (`0x0A`):**
+   + Send `0x0A` (`[0x0A][flags:u8][req_id:u32_le][file_size:u64_le][dest_path_len:u16_le][dest_path:wchar_t]`) where `dest_path` MUST include the target filename (e.g. `C:\Windows\Temp\README.md`).
+   + Wait for immediate 24-byte Server Reply **`0xA1`** (`req_opcode = 0x0A`):
+     - `status == 0`: Success! Destination file opened on peer; proceed to chunk streaming.
+     - `status == 7`: Zero-length file created directly (`file_size == 0`). Transfer is complete; skip `0x0C` streaming.
+     - `status == 2`: Target file already exists and `flags == 0` (conflict). Prompt user with Dialog `133` (`Confirm Replace File`). If approved, re-send `0x0A` with `flags = 1` (overwrite).
+     - `status == 6`: Disk full! Target volume has insufficient space.
+     - `status == 1`: Creation failed with Win32 error (`win32_error`).
+3. **Chunk Streaming & Completion:**
+   + Stream file contents across subsequent bulk blocks using `0x0C` (`[0x0C][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][chunk_len:u32_le][chunk_data]`).
+   + Each chunk is acknowledged by the peer with 9-byte Server Reply **`0xA5`** (`[0xA5][item_id:u32_le][chunk_index:u32_le]`) or `0xA9` on write error.
+   + Send `0x0E` (`[0x0E][item_id:u32_le][status:u16_le]`) once all chunks are transmitted to finalize timestamps and close file handles.
+   + Update Dialog `131` (`Progress Information`) during transmission.
 4. **Refresh:** Re-issue `0x04` (**Change / List Remote Directory**) on the target remote folder to update the UI.
 
 ### 4.3 Batch Upload (`Local -> Remote`, Multiple Files & Subdirectories)
