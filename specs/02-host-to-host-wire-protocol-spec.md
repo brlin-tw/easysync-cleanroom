@@ -79,7 +79,7 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | **`0x01`** | **Query Peer Root / Drives** | `0x0040D9C9` | `0x0043D479` | `0xA4` (and `0xA1`) | `[0x01][flags:u8][code_page:u16_le][name_len:u8][computer_name:bytes]` (11 bytes total for host query; Section 4.2.1) |
 | **`0x02`** | **Notify / Set Active Remote Directory** | `0x0040DA90` | `0x0043D577` | `0xA1` (`status=0`) | `[0x02][path_len:u8][dir_path:bytes]` (folder-change notification; Section 4.2.2) |
 | **`0x03`** | **Refresh Current Directory** | — | `0x0043D64D` | `0xA1` (`status=0`), then `0xA2` | `[0x03]` (1 byte; re-lists active directory on peer, returns 24B 0xA1 followed by 0xA2 listing) |
-| **`0x04`** | **Change / List Remote Directory** | `0x0040DB44` | `0x0043D741` | `0xA1` (`status=0`), then `0xA2` | `[0x04][path_len:u16_le][dir_path:wchar_t]` (emits 24B 0xA1 status=0 followed by 552B `0xA2` listing; Section 4.2.3) |
+| **`0x04`** | **Change / List Remote Directory** | `0x0040DB44` | `0x0043D741` | `0xA1` (`status=0`), then `0xA2`; or `0xA1` (`status=1`) | `[0x04][path_len:u16_le][dir_path:wchar_t]` (emits 24B 0xA1 status=0 followed by 552B `0xA2` listing, or 24B 0xA1 status=1 on error; Section 4.2.3) |
 | **`0x05`** | **Select Remote Drive (Legacy/No-op)** | `0x0040DC28` | `0x0043D394` | — | `[0x05]` (1 byte; legacy/no-op, jumps to exit `0x0043D42A`) |
 | **`0x06`** | **Remove Remote Directory** | `0x0040EE3A` | `0x0043D90F` | `0xA1` (`status=0`) | `[0x06][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `RemoveDirectoryW`, replies 24B `0xA1`) |
 | **`0x07`** | **Create Remote Directory** | `0x0040EF0A` | `0x0043DA61` | `0xA1` (`status=0`) | `[0x07][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `CreateDirectoryW`, replies 24B `0xA1`) |
@@ -173,8 +173,9 @@ Offset  Size        Type          Field
   1. Reads `path_len` as a 16-bit little-endian integer (`dx = word ptr [ecx]`).
   2. Copies `path_len` bytes from offset `+0x03` as UTF-16LE wchar_t.
   3. Appends wildcard (`\*.*`) and calls directory enumeration routines (`FindFirstFileW` / `FindNextFileW` via `0x004401AD`).
-  4. Transmits Server Reply **`0xA1`** (24-byte structured ACK, `req_opcode = 0x04`, `status = 0`, `req_id = 0`).
+  4. If `FindFirstFileW` succeeds, transmits Server Reply **`0xA1`** (24-byte structured ACK, `req_opcode = 0x04`, `status = 0`, `req_id = 0`, `win32_error = 0`).
   5. Formats directory entries into fixed-size 552-byte structures (`0x00440C2D` / `0x00440C66`) and transmits Server Reply **`0xA2`** (**Directory Listing Reply**; Section 6).
+  6. If `FindFirstFileW` fails (e.g. empty optical/removable drive returning `21` `ERROR_NOT_READY`, path not found, or access denied), transmits Server Reply **`0xA1`** (`status = 1`, `win32_error = GetLastError()`) and **terminates processing without sending `0xA2`**. Clients must inspect `status` in `0xA1` and abort waiting for `0xA2` if `status != 0`.
 
 #### 4.2.4 `0x0A` — Single File Upload Request (`0x0040E2A7` / `0x0043DF17`)
 Initiates the upload of a single file along with its destination path:
