@@ -100,21 +100,21 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 2. Start the hardware discovery and poll worker threads (`0x0041A480`).
 3. Populate the **Local Host** pane immediately using native OS filesystem APIs (`GetLogicalDriveStrings`, `FindFirstFile`, `GetDiskFreeSpaceEx`).
 4. While the remote peer is disconnected (`op_type=5` returns `0x0000`), display `"Disconnected"` (`0xF027`) in the status bar and disable remote file operations.
-5. As soon as `op_type=5` returns `0x007F`, both hosts transition to Transfer Line Mode, flush their RX and TX hardware pipes (`cmd=8` / `cmd=7` at `0x0041D014`), update status bar to `"Connected"` (`0xF026`), and automatically issue Client Command `0x01` (**Query Peer Root / Drives**) using the 5-byte payload `[0x01][flags:u8][param:u16_le][path_len=0:u8]` to populate the **Remote Host** pane. Initiating hosts must allow the link to settle to avoid pipe contention and buffer flushes.
-6. When the user navigates directories or to synchronize active folder state with the peer, the host issues opcode `0x02` (**Notify / Set Active Remote Directory**) with `[0x02][path_len:u8][dir_path:bytes]`, to which the peer acknowledges with Server Reply `0xA1` (`status = 2`) and posts UI message `0xFBD`.
+5. As soon as `op_type=5` returns `0x007F`, both hosts transition to Transfer Line Mode, flush their RX and TX hardware pipes (`cmd=8` / `cmd=7` at `0x0041D014`), update status bar to `"Connected"` (`0xF026`), and automatically issue Client Command `0x01` (**Query Peer Root / Drives**) using the 11-byte payload `[0x01][flags:u8][code_page:u16_le][name_len:u8][computer_name:bytes]` to exchange host identity and populate the **Remote Host** pane via the peer's `0xA4` reply. Initiating hosts must allow the link to settle to avoid pipe contention and buffer flushes.
+6. When the user navigates directories or to synchronize active folder state with the peer, the host issues opcode `0x02` (**Notify / Set Active Remote Directory**) with `[0x02][path_len:u8][dir_path:bytes]`, to which the peer acknowledges with Server Reply `0xA1` (24-byte structured ACK, `status = 0`) and posts UI message `0xFBD`.
 
 ### 4.2 Single File Upload (`Local -> Remote`)
 1. **Free Space Check:** Query cached volume free space (or send `0x0E` **Acknowledge File Transfer Completion** / cached drive space). If `file_size > remote_free_bytes`, abort and display `"Disk is full"` (`0xF038`).
 2. **Overwrite Pre-Check:** Send `0x0F` (`[0x0F][dest_len][dest_path]`).
    + Wait for `0xA1`:
-     - If `status == 1` (Does not exist): proceed.
-     - If `status == 3` (Already exists): show Dialog `133` (`Confirm Replace File`). If user selects `No` or `Cancel`, abort.
+     - If `status == 0` (Does not exist): proceed.
+     - If `status == 1` (Already exists): show Dialog `133` (`Confirm Replace File`). If user selects `No` or `Cancel`, abort.
 3. **Upload Initiation & Streaming:**
-   + Send `0x0A` (`[0x0A][dest_len:u32_le][file_size:u32_le][WIN32_FIND_DATAA:320B][dest_path]`).
-   + Stream file contents across subsequent 64 KB blocks using `0x0C` (`[0x0C][offset:u32_le][chunk_len:u32_le][chunk_data]`).
-   + Send `0x0E` (`[0x0E]`) to commit timestamps and file attributes.
+   + Send `0x0A` (`[0x0A][req_id:u32_le][dest_len:u16_le][file_size:u32_le][WIN32_FIND_DATAA:320B][dest_path:wchar_t]`).
+   + Stream file contents across subsequent 64 KB blocks using `0x0C` (`[0x0C][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][chunk_len:u32_le][chunk_data]`).
+   + Send `0x0E` (`[0x0E]`) to commit timestamps and file attributes via `0x37`.
    + Update Dialog `131` (`Progress Information`) after each 64 KB bulk block.
-   + Wait for `0xA1` (`status == 9` on success, or failure status code).
+   + Wait for `0xA1` (`status == 0` on success, or `status == 1` failure status code with `win32_error`).
 4. **Refresh:** Re-issue `0x04` (**Change / List Remote Directory**) on the target remote folder to update the UI.
 
 ### 4.3 Batch Upload (`Local -> Remote`, Multiple Files & Subdirectories)
@@ -123,14 +123,14 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 3. Receive `0xAA` (or `0xA8`) listing only the conflicting files that already exist on the remote peer.
 4. Iterate through conflicting items with Dialog `133` (`Yes`, `Yes to All`, `No`, `Cancel`) to filter the upload list.
 5. Send file and directory records, create remote directories via `0x07` (`CreateDirectory`), and stream file chunks via `0x0C`.
-6. Wait for `0xA1` (`status == 0x0B`) or `0xA9` (Batch Error). If an unfamiliar Win32 error code is returned, optionally send `0x38` (**Format Win32 Error Codes**) and display the peer's `0xAC` formatted error message.
+6. Wait for `0xA1` (`status == 0`) or `0xA9` (Batch Error). If an unfamiliar Win32 error code is returned, optionally send `0x38` (**Format Win32 Error Codes**) and display the peer's `0xAC` formatted error message.
 
 ### 4.4 Single & Batch Download (`Remote -> Local`)
-1. For a single file, check local overwrite (`Confirm Replace File` Dialog `133`), then send `0x0B` (**Single File Download Request**) and stream the incoming `0xA4` payload to the local file, applying the 320-byte `WIN32_FIND_DATAA` timestamps and attributes upon completion.
+1. For a single file, check local overwrite (`Confirm Replace File` Dialog `133`), then send `0x0B` (**Single File Download Request**) and stream the incoming `0xA3` payload to the local file, applying the timestamps and attributes via `0x37` upon completion.
 2. For a batch selection (multiple files or folders), send `0x10` (**Batch File Download Request**) or `0x35`/`0x36`. The remote peer expands subdirectories recursively and sends:
    + `0xAB` if any files could not be opened/statted,
    + `0xA6` for all zero-length files and empty directories (created immediately on the local disk),
-   + `0xA5` streaming all non-empty files (written sequentially to disk with progress updates), or `0xA7` if all items in the batch were empty.
+   + `0xA3` streaming non-empty file data chunks (written sequentially to disk with progress updates), finalized by `0xA7` (Batch Download Complete ACK).
 
 ---
 
