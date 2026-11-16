@@ -114,9 +114,9 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
      - `status == 6`: Disk full! Target volume has insufficient space.
      - `status == 1`: Creation failed with Win32 error (`win32_error`).
 3. **Chunk Streaming & Completion:**
-   + Stream file contents across subsequent bulk blocks using `0x0C` (`[0x0C][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][chunk_len:u32_le][chunk_data]`).
-   + Each chunk is acknowledged by the peer with 9-byte Server Reply **`0xA5`** (`[0xA5][item_id:u32_le][chunk_index:u32_le]`) or `0xA9` on write error.
-   + Send `0x0E` (`[0x0E][item_id:u32_le][status:u16_le]`) once all chunks are transmitted to finalize timestamps and close file handles.
+   + Stream file contents sequentially across subsequent bulk blocks using `0x0C` (`[0x0C][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][chunk_len:u32_le][chunk_data]`).
+   + `0x0C` chunk transmission is unacknowledged during normal/successful transfers; the client streams chunks without waiting for per-chunk replies (the peer emits `0xA5` or `0xA9` only if a write error occurs).
+   + Send `0x0E` (`[0x0E][item_id:u32_le][status:u16_le]`) once all chunks are transmitted to finalize timestamps and commit file attributes. Opcode `0x0E` also emits no reply.
    + Update Dialog `131` (`Progress Information`) during transmission.
 4. **Refresh:** Re-issue `0x04` (**Change / List Remote Directory**) on the target remote folder to update the UI.
 
