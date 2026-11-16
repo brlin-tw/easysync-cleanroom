@@ -152,6 +152,18 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
    + `0xA6` for all zero-length files and empty directories (created immediately on the local disk),
    + `0xA3` streaming non-empty file data chunks (written sequentially to disk with progress updates), finalized by `0xA7` (Batch Download Complete ACK).
 
+### 4.6 File and Directory Management Operations (Delete, Create, Remove, Rename)
+1. **Delete Remote File (`0x08`):**
+   - Transmit Opcode `0x08` with a 7-byte header (`[0x08][req_id:u32_le][path_len:u16_le]`) followed by `path_len` bytes of UTF-16LE encoded path.
+   - `path_len` must be exactly $2 \times \text{number of characters}$ (byte length). Omitting `path_len` or sending ASCII triggers a fatal 14,915-byte stack buffer overflow crash in `EasySuite.exe`.
+   - Wait for 24-byte Server Reply **`0xA1`** (`req_opcode = 0x08`, `req_id` matching). If `status == 0`, deletion succeeded; if `status == 1`, check `win32_error`.
+2. **Remove Remote Directory (`0x06`):**
+   - Symmetrical to `0x08`: transmit `[0x06][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]`. Server calls `RemoveDirectoryW` and replies with 24-byte `0xA1`.
+3. **Create Remote Directory (`0x07`):**
+   - Transmit `[0x07][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]`. Server calls `CreateDirectoryW` and replies with 24-byte `0xA1`.
+4. **Rename Remote File or Directory (`0x09`):**
+   - Transmit `[0x09][req_id:u32_le][old_len:u16_le][new_len:u16_le][old_path:wchar_t][new_path:wchar_t]`. Server calls `MoveFileW` and replies with 24-byte `0xA1`.
+
 ---
 
 ## 5. Localization & Multi-Language Support (11 Locales)

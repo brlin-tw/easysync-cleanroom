@@ -325,6 +325,30 @@ Record Offset  Size        Type          Field
   > [!CAUTION]
   > Opcode `0x16` is **strictly a binary batch pre-check command**; it is **NOT** an XML channel. If a client transmits `<OTIMSG>` ASCII XML preceded by opcode `0x16`, `EasySuite.exe` interprets the leading 4 ASCII bytes `b"<OTI"` (`0x49544F3C` = 1,230,327,612) as a 32-bit count, attempts to loop and allocate memory for 1.23 billion items, and crashes fatally in `ntdll!RtlFreeHeap`.
 
+#### 4.2.8 `0x08` — Delete Remote File (`0x0040EC14` / `0x0043DBD1`)
+Deletes a single file on the remote peer:
+
+```text
+Offset  Size        Type          Field
++0x00   1           uint8         opcode = 0x08
++0x01   4           uint32_le     req_id (Client transaction sequence identifier)
++0x05   2           uint16_le     path_len (P, byte count of UTF-16LE path: 2 * wchar count)
++0x07   P           wchar_t       file_path (Full remote file path, UTF-16LE encoded)
+```
+
+- **Server Behavior (`0x0043DBD1`):**
+  1. Unpacks `req_id` (`[ebx]`) and `path_len` (`[ebx + 4]`).
+  2. Copies `path_len` bytes into a 1,024-byte stack buffer via `memcpy`.
+  3. Invokes `DeleteFileW` on the target path.
+  4. Returns standard 24-byte Server Reply **`0xA1`** (`req_opcode = 0x08`, `req_id` echoed):
+     - `status = 0`, `win32_error = 0`: File successfully deleted.
+     - `status = 1`, `win32_error = GetLastError()`: Deletion failed (e.g. `ERROR_FILE_NOT_FOUND` = 2, `ERROR_ACCESS_DENIED` = 5).
+- **Critical Opcode 0x08 Crash Pitfall:**
+  > [!CAUTION]
+  > Opcode `0x08` requires the 2-byte `path_len` field and UTF-16LE encoding.
+  > If a client sends an unpadded ASCII path or omits `path_len` (e.g. sending 18 bytes: `[0x08][req_id:4B]["C:\REUSE.toml":13B]`), the server interprets the first two ASCII characters (`'C:'` = `0x3A43` = 14,915 bytes) as `path_len`.
+  > `memcpy` immediately overflows the server's 1,024-byte stack buffer and corrupts the SEH frame, causing an unhandled Access Violation (`0xC0000005`) that crashes `EasySuite.exe`. The bridge controller drops to `action_code = 1` (peer disconnected), all subsequent writes fail with timeout errors, and the client hangs waiting for a reply.
+
 ---
 
 ## 5. Complete Server Reply Catalog (`0xA1..0xAC`)
