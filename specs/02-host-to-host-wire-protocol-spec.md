@@ -60,12 +60,12 @@ The RX reassembler thread dequeues `0x10000`-byte blocks from the RX queue and r
 
 ---
 
-## 3. Cross-Platform & Mac (`flags & 0x10`) Endianness Rules
+## 3. Cross-Platform Endianness & Peer Mode Rules (`flags & 0x10` / `0x20`)
 
-`EasySuite.exe` supports connecting a Windows x86 host (little-endian) to a PowerPC Mac OS peer (big-endian) via a global platform mode variable at `[0x00480000]`, set to `0x10` when Client Command `0x01` (**Query Peer Root / Drives**) is received with `flags & 0x10 != 0` (`0x0043D492`).
-- **Default (`[0x00480000] == 0`, Windows/x86/ARM little-endian peers):** All multi-byte integers (`uint16`, `uint32`, `int64`) inside wire command/reply payloads (and inside the 552-byte directory entry struct) are **little-endian**.
-- **Mac Peer Mode (`[0x00480000] == 0x10`):** Multi-byte integers in command headers, UTF-16 characters, and directory entries are byte-swapped (`0x004029C1`, `0x004029CC`, `0x004029F4`, `0x00402AC6`, `0x00442525`).
-- **Alternate Mode (`[0x00480000] == 0x20`):** Activated when `flags & 0x20 != 0` in `0x01` (`0x0043D4AB`).
+`EasySuite.exe` supports connecting a Windows x86 host (little-endian) to PowerPC Mac OS or little-endian POSIX/Unix peers via a global platform mode variable at `[0x00480000]`, configured when Client Command `0x01` (**Query Peer Root / Drives**) is received (`0x0043D492..0x0043D4B5`):
+- **Default (`[0x00480000] == 0`, Windows/x86/ARM little-endian peers):** All multi-byte integers (`uint16`, `uint32`, `int64`) inside wire command/reply payloads (and inside the 552-byte directory entry struct) are **little-endian**, paths use `\`, and error codes are formatted with `KERNEL32.DLL!FormatMessageA` (`0x00402372`).
+- **Mac Peer Mode (`[0x00480000] == 0x10`, `flags & 0x10 != 0`):** Multi-byte integers in command headers, UTF-16 characters, and directory entries are byte-swapped (`0x004029C1`, `0x004029CC`, `0x004029F4`, `0x00402AC6`, `0x00442525`). Paths are normalized to `/` (`0x00402B88`), error codes are formatted with `MSVCRT.dll!strerror` (`0x004023AE`), abort/cancel commands (`0x0D`/`0x0F`/`0x11`) append `"ErrStr"`, and handlers gate on `[0x7ADBF4] != 0`.
+- **Little-Endian POSIX/Unix Peer Mode (`[0x00480000] == 0x20`, `flags & 0x20 != 0`):** Keeps all multi-byte integers and UTF-16LE strings **little-endian** (no byte-swapping), but normalizes outgoing UTF-16LE path separators from `\` to `/` (`0x00402B88`), formats error codes via `MSVCRT.dll!strerror` (`0x004023AE`), appends the `"ErrStr"` suffix on `0x0D`/`0x0F`/`0x11`, and gates server handlers on `[0x45CB00] != 0`.
 
 ---
 
@@ -93,7 +93,7 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | **`0x0E`** | **Acknowledge File Transfer Completion** | `0x0040CB5F` | `0x0043FFA6` | — | `[0x0E][item_id:u32_le][status:u16_le]` (7 bytes; removes transfer job from `0x7adce0` after streaming completes) |
 | **`0x0F`** | **Cancel Single File Transfer (Keep Partial)** | `0x0040EB06` | `0x0043E3B4` | — | `[0x0F][item_id:u32_le][win32_error:u32_le]` (9 bytes in Windows mode; appends `"ErrStr"` + `err_str_len:u32_le` + `err_str:wchar_t[]` in `0x10`/`0x20` mode; closes handle without deleting destination file) |
 | **`0x10`** | **Batch File Download Request (16-bit Count)** | `0x0040DD56` | `0x0043E781` | `0xA3`, `0xA6`, `0xA7`, `0xAB` | `[0x10][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (replies with `0xA3` chunks, `0xA6` zero-len, `0xAB` errors, ended by `0xA7`) |
-| **`0x11`** | **Abort Batch File Transfer** | `0x0040E19F` | `0x0043E45C` | — | `[0x11][req_id:u32_le][win32_error:u32_le]` (9 bytes in Windows mode; `ErrStr` extension in `0x10` mode; cancels batch job without reply) |
+| **`0x11`** | **Abort Batch File Transfer** | `0x0040E19F` | `0x0043E45C` | — | `[0x11][req_id:u32_le][win32_error:u32_le]` (9 bytes in Windows mode; `ErrStr` extension in `0x10`/`0x20` mode; cancels batch job without reply) |
 | **`0x12`** | **Batch Prepare / Clear Read-Only Attributes** | `0x0040E628` | `0x0043F981` | `0xA1` | `[0x12][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` |
 | **`0x13`** | **Batch Upload Pre-Check (Space & Conflicts)** | `0x0040E468` | `0x0043F269` | `0xA8` | `[0x13][req_id:u32_le][total_size:u64_le][flags:u16_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (replies `0xA8`) |
 | **`0x14`** | **Cancel Active Packet Splitter Job** | `0x0040E60A` | `0x0043FCF8` | — | `[0x14][job_id:u32_le]` (5 bytes; cancels active job with flag `1` without reply) |
