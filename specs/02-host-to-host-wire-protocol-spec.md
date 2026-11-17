@@ -60,11 +60,12 @@ The RX reassembler thread dequeues `0x10000`-byte blocks from the RX queue and r
 
 ---
 
-## 3. Cross-Platform & Mac (`0x10`) Endianness Rules
+## 3. Cross-Platform & Mac (`flags & 0x10`) Endianness Rules
 
-`EasySuite.exe` supports connecting a Windows x86 host (little-endian) to a PowerPC Mac OS peer (big-endian) via a global boolean flag `bMac` (`[0x0045F980]`), set when Client Command `0x10` (`Set Peer Platform = Mac`) is received (`0x0043DC6A`).
-- **Default (`bMac == 0`, Windows/Linux/x86/ARM little-endian peers):** All multi-byte integers (`uint16`, `uint32`, `int64`) inside wire command/reply payloads (and inside the 552-byte directory entry struct) are **little-endian**.
-- **Mac Peer Mode (`bMac == 1`):** Multi-byte integers in command headers and directory entries are byte-swapped (`0x00442525`).
+`EasySuite.exe` supports connecting a Windows x86 host (little-endian) to a PowerPC Mac OS peer (big-endian) via a global platform mode variable at `[0x00480000]`, set to `0x10` when Client Command `0x01` (**Query Peer Root / Drives**) is received with `flags & 0x10 != 0` (`0x0043D492`).
+- **Default (`[0x00480000] == 0`, Windows/x86/ARM little-endian peers):** All multi-byte integers (`uint16`, `uint32`, `int64`) inside wire command/reply payloads (and inside the 552-byte directory entry struct) are **little-endian**.
+- **Mac Peer Mode (`[0x00480000] == 0x10`):** Multi-byte integers in command headers, UTF-16 characters, and directory entries are byte-swapped (`0x004029C1`, `0x004029CC`, `0x004029F4`, `0x00402AC6`, `0x00442525`).
+- **Alternate Mode (`[0x00480000] == 0x20`):** Activated when `flags & 0x20 != 0` in `0x01` (`0x0043D4AB`).
 
 ---
 
@@ -78,33 +79,33 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | :---: | :--- | :--- | :--- | :---: | :--- |
 | **`0x01`** | **Query Peer Root / Drives** | `0x0040D9C9` | `0x0043D479` | `0xA4` (and `0xA1`) | `[0x01][flags:u8][code_page:u16_le][name_len:u8][computer_name:bytes]` (11 bytes total for host query; Section 4.2.1) |
 | **`0x02`** | **Notify / Set Active Remote Directory** | `0x0040DA90` | `0x0043D577` | `0xA1` (`status=0`) | `[0x02][path_len:u8][dir_path:bytes]` (folder-change notification; Section 4.2.2) |
-| **`0x03`** | **Refresh Current Directory** | — | `0x0043D64D` | `0xA1` (`status=0`), then `0xA2` | `[0x03]` (1 byte; re-lists active directory on peer, returns 24B 0xA1 followed by 0xA2 listing) |
+| **`0x03`** | **Refresh Current Directory** | — | `0x0043D64D` | `0xA1` (`status=0`), then `0xA2`; or `0xA1` (`status=3`) | `[0x03]` (1 byte; re-lists active directory on peer, returns 24B 0xA1 `status=0` followed by 0xA2 listing, or `status=3` on error) |
 | **`0x04`** | **Change / List Remote Directory** | `0x0040DB44` | `0x0043D741` | `0xA1` (`status=0`), then `0xA2`; or `0xA1` (`status=1`) | `[0x04][path_len:u16_le][dir_path:wchar_t]` (emits 24B 0xA1 status=0 followed by 552B `0xA2` listing, or 24B 0xA1 status=1 on error; Section 4.2.3) |
 | **`0x05`** | **Select Remote Drive (Legacy/No-op)** | `0x0040DC28` | `0x0043D394` | — | `[0x05]` (1 byte; legacy/no-op, jumps to exit `0x0043D42A`) |
-| **`0x06`** | **Remove Remote Directory** | `0x0040EE3A` | `0x0043D90F` | `0xA1` (`status=0`) | `[0x06][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `RemoveDirectoryW`, replies 24B `0xA1`) |
-| **`0x07`** | **Create Remote Directory** | `0x0040EF0A` | `0x0043DA61` | `0xA1` (`status=0`) | `[0x07][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `CreateDirectoryW`, replies 24B `0xA1`) |
+| **`0x06`** | **Remove Remote Directory** | `0x0040EE3A` | `0x0043D90F` | `0xA1` (`status=0` or `1`) | `[0x06][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `RemoveDirectoryW`, replies 24B `0xA1`) |
+| **`0x07`** | **Create Remote Directory** | `0x0040EF0A` | `0x0043DA61` | `0xA1` (`status=0` or `1`) | `[0x07][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `CreateDirectoryW`, replies 24B `0xA1`) |
 | **`0x08`** | **Delete Remote File** | `0x0040EC14` | `0x0043DBD1` | `0xA1` (`status=0` or `1`) | `[0x08][req_id:u32_le][path_len:u16_le][file_path:wchar_t]` (calls `DeleteFileW`, replies 24B `0xA1`) |
-| **`0x09`** | **Rename Remote File or Directory** | `0x0040ECE4` | `0x0043DD10` | `0xA1` (`status=0`) | `[0x09][req_id:u32_le][old_len:u16_le][new_len:u16_le][old_path:wchar_t][new_path:wchar_t]` (calls `MoveFileW`, replies 24B `0xA1`) |
+| **`0x09`** | **Rename Remote File or Directory** | `0x0040ECE4` | `0x0043DD10` | `0xA1` (`status=0` or `1`) | `[0x09][req_id:u32_le][old_len:u16_le][new_len:u16_le][old_path:wchar_t][new_path:wchar_t]` (calls `MoveFileW`, replies 24B `0xA1`) |
 | **`0x0A`** | **Single File Upload Request** | `0x0040E2A7` | `0x0043DF17` | `0xA1` (`status=0..7`) | `[0x0A][flags:u8][req_id:u32_le][file_size:u64_le][dest_path_len:u16_le][dest_path:wchar_t]` (16B header + UTF-16LE path; Section 4.2.4) |
 | **`0x0B`** | **Single File Download Request** | `0x0040DBF4` | `0x0043E4DA` | `0xA1` (`status=9` inline, `7` empty, `1` error); or `0xA1` (`status=0`) then `0xA3` | `[0x0B][req_id:u32_le][src_len:u16_le][src_path:wchar_t][dest_len:u16_le][dest_path:wchar_t]` (9B header/lengths + UTF-16LE paths; Section 4.2.5) |
 | **`0x0C`** | **Upload File Data Chunk** | `0x004450C1` / `0x00443EC9` | `0x00440E41` | None (on success); `0xA5` or `0xA9` (on write error) | `[0x0C][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][chunk_len:u32_le][data:bytes]` (Unacknowledged streaming; Section 4.2.6) |
-| **`0x0D`** | **Abort Single File Upload (Delete Partial)** | `0x0040E9F8` | `0x0043E31E` | — | `[0x0D][item_id:u32_le][status:u32_le]` (9 bytes; closes handle and deletes partial destination file) |
-| **`0x0E`** | **Acknowledge File Transfer Completion** | `0x0040CB5F` | `0x0043FFA6` | — | `[0x0E][item_id:u32_le][status:u16_le]` (7 bytes; sent after file streaming completes to finalize timestamps/attributes) |
-| **`0x0F`** | **Cancel Single File Transfer (Keep Partial)** | `0x0040EB06` | `0x0043E3B4` | — | `[0x0F][item_id:u32_le][status:u32_le]` (9 bytes; closes handle without deleting destination file) |
-| **`0x10`** | **Batch File Download Request (16-bit Count)** | `0x0040DD56` | `0x0043E781` | `0xA3`, `0xA7` | `[0x10][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (replies with `0xA3` chunks, ended by `0xA7`) |
-| **`0x11`** | **Abort Batch File Transfer** | `0x0040E19F` | `0x0043E45C` | `0xA1` | `[0x11]` (1 byte) |
+| **`0x0D`** | **Abort Single File Upload (Delete Partial)** | `0x0040E9F8` | `0x0043E31E` | — | `[0x0D][item_id:u32_le][win32_error:u32_le]` (9 bytes in Windows mode; appends `"ErrStr"` + `err_str_len:u32_le` + `err_str:wchar_t[]` in `0x10`/`0x20` mode; closes handle and deletes partial destination file) |
+| **`0x0E`** | **Acknowledge File Transfer Completion** | `0x0040CB5F` | `0x0043FFA6` | — | `[0x0E][item_id:u32_le][status:u16_le]` (7 bytes; removes transfer job from `0x7adce0` after streaming completes) |
+| **`0x0F`** | **Cancel Single File Transfer (Keep Partial)** | `0x0040EB06` | `0x0043E3B4` | — | `[0x0F][item_id:u32_le][win32_error:u32_le]` (9 bytes in Windows mode; appends `"ErrStr"` + `err_str_len:u32_le` + `err_str:wchar_t[]` in `0x10`/`0x20` mode; closes handle without deleting destination file) |
+| **`0x10`** | **Batch File Download Request (16-bit Count)** | `0x0040DD56` | `0x0043E781` | `0xA3`, `0xA6`, `0xA7`, `0xAB` | `[0x10][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (replies with `0xA3` chunks, `0xA6` zero-len, `0xAB` errors, ended by `0xA7`) |
+| **`0x11`** | **Abort Batch File Transfer** | `0x0040E19F` | `0x0043E45C` | — | `[0x11][req_id:u32_le][win32_error:u32_le]` (9 bytes in Windows mode; `ErrStr` extension in `0x10` mode; cancels batch job without reply) |
 | **`0x12`** | **Batch Prepare / Clear Read-Only Attributes** | `0x0040E628` | `0x0043F981` | `0xA1` | `[0x12][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` |
-| **`0x13`** | **Batch Upload Pre-Check (Space & Conflicts)** | `0x0040E468` | `0x0043F269` | `0xA8` | `[0x13][req_id:u32_le][total_size:u64_le][flags:u16_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (replies 13B `0xA8`) |
-| **`0x14`** | **Cancel Active Packet Splitter Job** | `0x0040E60A` | `0x0043FCF8` | `0xA1` | `[0x14]` (1 byte) |
-| **`0x15`** | **Create Batch Zero-Length Files** | `0x0040E7B3` | `0x0043FB55` | `0xA1` | `[0x15]` (1 byte) |
-| **`0x16`** | **Extended Batch Upload Pre-Check** | `0x0043F5F3` | `0x0043F5F3` | `0xAA` | `[0x16][req_id:u32_le][item_count:u32_le][records...]` (Section 4.2.7) |
-| **`0x17`** | **UI Notification Command** | `0x0040F6B1` | `0x0043D2E8` | — | `[0x17][code:u8]` (posts Win32 message `0xFC0`) |
+| **`0x13`** | **Batch Upload Pre-Check (Space & Conflicts)** | `0x0040E468` | `0x0043F269` | `0xA8` | `[0x13][req_id:u32_le][total_size:u64_le][flags:u16_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (replies `0xA8`) |
+| **`0x14`** | **Cancel Active Packet Splitter Job** | `0x0040E60A` | `0x0043FCF8` | — | `[0x14][job_id:u32_le]` (5 bytes; cancels active job with flag `1` without reply) |
+| **`0x15`** | **Create Batch Zero-Length Files** | `0x0040E7B3` | `0x0043FB55` | `0xA1` | `[0x15][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` |
+| **`0x16`** | **Extended Batch Upload Pre-Check** | `0x0043F5F3` | `0x0043F5F3` | `0xAA` | `[0x16][req_id:u32_le][total_size:u64_le][flags:u16_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (Section 4.2.7) |
+| **`0x17`** | **UI Notification Command** | `0x0040F6B1` | `0x0043D2E8` | — | `[0x17][code:int8]` (2 bytes; posts Win32 message `0x0FC0` with `wParam = (int8)code`, `lParam = 0`) |
 | **`0x32`** | **Keep-Alive / No-Op Ack 0x32** | — | `0x0043D2C1` | — | `[0x32]` (1 byte; immediate jump to exit `0x0043D42A`) |
 | **`0x33`** | **Keep-Alive / No-Op Ack 0x33** | — | `0x0043D374` | — | `[0x33]` (1 byte; immediate jump to exit `0x0043D42A`) |
 | **`0x34`** | **Dynamic Library Plugin RPC XML Tunnel (`<OTIMSG>`)** | `0x0040EFDF` | `0x0043F13D` | `0x34` | `[0x34][dll_name_len:u8][dll_name:bytes][xml_len:u32_le][xml_bytes]` (Section 7.1) |
-| **`0x35`** | **Multi-ID Batch Download Request (16-bit Count)** | `0x0040DF00` | `0x0043EB3F` | `0xA3`, `0xA7` | `[0x35][item_count:u16_le][item_ids:u32_le[item_count]]` |
-| **`0x36`** | **Multi-ID Batch Download Request (32-bit Count)** | `0x0040E05D` | `0x0043EE3E` | `0xA3`, `0xA7` | `[0x36][item_count:u32_le][item_ids:u32_le[item_count]]` |
-| **`0x37`** | **Set Remote File Attributes and Timestamps** | `0x0040F511` | `0x00441A47` | `0xA1` | `[0x37][attributes:u32_le][ftCreationTime:8B][ftLastAccessTime:8B][ftLastWriteTime:8B][path_len:u32_le][path:wchar_t]` |
+| **`0x35`** | **Multi-ID Batch Download Request (16-bit Count)** | `0x0040DF00` | `0x0043EB3F` | `0xA3`, `0xA6`, `0xA7`, `0xAB` | `[0x35][flags_or_cp:u16_le][req_id:u32_le][has_extra:u8][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (delegates to `0x36` if `item_count > 0xFFFF`) |
+| **`0x36`** | **Multi-ID Batch Download Request (32-bit Count)** | `0x0040E05D` | `0x0043EE3E` | `0xA3`, `0xA6`, `0xA7`, `0xAB` | `[0x36][flags_or_cp:u16_le][req_id:u32_le][has_extra:u8][item_count:u32_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` |
+| **`0x37`** | **Set Remote File Attributes and Timestamps** | `0x0040F511` | `0x00441A47` | — | `[0x37][attributes:u32_le][ftCreationTime:8B][ftLastAccessTime:8B][ftLastWriteTime:8B][path_len:u32_le][path:wchar_t]` (fire-and-forget; no reply) |
 | **`0x38`** | **Format Win32 Error Codes Request** | — | `0x00441B9F` | `0xAC` | `[0x38][count:u32_le][codes:u32_le[count]]` (replies `0xAC` via `0x00441CC4`) |
 | **`0x39`** | **Extra XML Control Command (`<ExtraXmlCommand>`)** | `0x0040F635` | `0x00441DB1` | `0x39` / Mode Switch | `[0x39][xml_len:u32_le][xml_bytes]` (Section 7.2) |
 
@@ -295,35 +296,35 @@ Offset  Size        Type          Field
   After transmitting all `0x0C` chunks, the client issues Opcode **`0x0E`** (`Acknowledge File Transfer Completion`, 7 bytes) to commit file timestamps and attributes. Opcode `0x0E` also emits no reply.
 
 #### 4.2.7 `0x16` — Extended Batch Upload Pre-Check (`0x0043F5F3`)
-Performs a pre-transfer metadata collision check for a batch of files against the peer's existing files before upload:
+Performs a pre-transfer space and metadata collision check for a batch of files against the peer's existing files before upload (extended counterpart of `0x13`):
 
 ```text
 Offset  Size        Type          Field
 +0x00   1           uint8         opcode = 0x16
-+0x01   4           uint32_le     dest_dir_len (D)
-+0x05   4           uint32_le     item_count (K)
-+0x09   D           bytes         dest_dir (ASCII/MBCS target directory on peer)
-+0x09+D ...         records[K]    Back-to-back file metadata pre-check records
++0x01   4           uint32_le     req_id (Client transaction sequence ID)
++0x05   8           uint64_le     total_size (Total byte count of batch)
++0x0D   2           uint16_le     flags (Pre-check option flags)
++0x0F   2           uint16_le     item_count (K)
++0x11   ...         records[K]    Back-to-back file pre-check records
 ```
 
 Each of the `K` records has the layout:
 
 ```text
 Record Offset  Size        Type          Field
-+0x00          4           uint32_le     rel_path_len (R)
-+0x04          320 (0x140) struct        WIN32_FIND_DATAA (source file attributes, size, and timestamps)
-+0x144         R           bytes         rel_path (relative path under dest_dir)
++0x00          4           uint32_le     item_id (Batch item identifier)
++0x04          2           uint16_le     path_len (P, byte length of UTF-16LE path)
++0x06          P           wchar_t       dest_path (UTF-16LE destination file path on peer)
 ```
 
 - **Server Behavior (`0x0043F5F3`):**
-  1. Dispatched from Client Command Dispatcher `0x0043D181` via `0x0043D2DE..0x0043D310`.
-  2. Reads `dest_dir` and iterates through all `item_count` records.
-  3. Tests whether each target file already exists on the peer via `FindFirstFileA`.
-  4. For every colliding item, records both the peer's existing `WIN32_FIND_DATAA` and the source `WIN32_FIND_DATAA`.
-  5. Generates Server Reply **`0xAA`** (**Extended Batch Pre-Check Reply** at `0x0044196E`) containing both sets of metadata so the client can display Dialog `133` (`Confirm Replace File`) with accurate date/size comparisons.
+  1. Dispatched from Client Command Dispatcher `0x0043D181` via `0x0043D309..0x0043D310`.
+  2. Reads `req_id`, `total_size`, `flags`, and iterates through all `item_count` records.
+  3. Checks volume free space and tests whether each target file already exists on the peer.
+  4. Generates Server Reply **`0xAA`** (**Extended Batch Pre-Check Reply** at `0x0044196E`) containing colliding `item_id`s and `(item_id, extra_val)` pairs.
 - **Critical Opcode 0x16 Crash Pitfall:**
   > [!CAUTION]
-  > Opcode `0x16` is **strictly a binary batch pre-check command**; it is **NOT** an XML channel. If a client transmits `<OTIMSG>` ASCII XML preceded by opcode `0x16`, `EasySuite.exe` interprets the leading 4 ASCII bytes `b"<OTI"` (`0x49544F3C` = 1,230,327,612) as a 32-bit count, attempts to loop and allocate memory for 1.23 billion items, and crashes fatally in `ntdll!RtlFreeHeap`.
+  > Opcode `0x16` is **strictly a binary batch pre-check command**; it is **NOT** an XML channel. If a client transmits `<OTIMSG>` ASCII XML preceded by opcode `0x16`, `EasySuite.exe` interprets the ASCII bytes at `+0x0F` (`"SG"` / `"<O"`) as a large 16-bit `item_count`, reads out-of-bounds past the end of the packet, and crashes.
 
 #### 4.2.8 `0x08` — Delete Remote File (`0x0040EC14` / `0x0043DBD1`)
 Deletes a single file on the remote peer:
@@ -362,15 +363,15 @@ Server Replies are sent by `0x0043FD2D..0x00441DA8` in response to Client Comman
 | **`0xA1`** | **Command Status / ACK / Inline Data** | `0x0043FD2D` | `0x0040BA96` | `[0xA1][req_opcode:u8][status:u8][req_id:u32_le][win32_error:u32_le][reserved:13B][optional_data:bytes]`:<br/>- Standard 24-byte ACK (`status = 0` success, `1` error, `2` conflict, `6` disk full, `7` empty file).<br/>- Small File Inline Delivery (`status = 9`, `file_size <= 64,512` bytes): 24-byte header followed by raw file payload starting at offset `+0x18`, total packet size `24 + file_size` (Section 4.2.5). |
 | **`0xA2`** | **Directory Listing Reply** | `0x00440C2D` | `0x0040C251` | `[0xA2][entry_count:u16_le][entries: Entry552[entry_count]]` (`3 + 552 * entry_count` bytes; see Section 6) |
 | **`0xA3`** | **File Download Data Chunk** | `0x004450C1` | `0x0040CF68` | `[0xA3][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][data_len:u32_le][file_data:bytes]` (Streaming chunks for files > 64,512 bytes via `0x0B` or batch downloads via `0x10`) |
-| **`0xA4`** | **Remote Logical Drives List Reply** | `0x00440FDC` | `0x0040F093` | `[0xA4][drive_count:u16_le][records: (drive_letter:char, drive_type:u8)...]` (response to `0x01`; Section 4.2.1) |
+| **`0xA4`** | **Remote Logical Drives List Reply** | `0x00440FDC` | `0x0040F093` | `[0xA4][drive_count:u16_le][records: (drive_letter:char, drive_type:u8)...]` (`drive_type = GetDriveTypeA - 1`: `1`=Removable, `2`=Fixed, `3`=Remote, `4`=CDROM, `5`=RAMDisk; response to `0x01`) |
 | **`0xA5`** | **Single-File Upload Error Notification** | `0x0043FE85` | `0x0040D7D2` | `[0xA5][item_id:u32_le][win32_error:u32_le]` (9 bytes total; emitted only when a file chunk write fails during `0x0C`; Section 4.2.6) |
-| **`0xA6`** | **Batch Zero-Length Files / Empty Dirs** | `0x00441602` | `0x0040CFEF` | `[0xA6][item_count:u32_le][records: (path_len:u32_le, find_data:320B, path:bytes)...]` (items with 0 data bytes during `0x0C`) |
-| **`0xA7`** | **Batch Download Complete ACK** | `0x0044175A` | `0x0040D210` | `[0xA7][req_id:u32_le][status:u16_le]` (7 bytes total; signals end of `0x10` batch download) |
-| **`0xA8`** | **Batch Upload Pre-Check Reply** | `0x004418C9` | `0x0040D290` | `[0xA8][subcode:u8][status:u8][flags:u16_le][req_id:u32_le][param:u32_le]` (13 bytes total; response to `0x13`) |
-| **`0xA9`** | **Batch Upload Error Notification** | `0x004417A0` | `0x0040D420` | `[0xA9][win32_error:u32_le][failed_path_len:u32_le][failed_path:bytes]` |
-| **`0xAA`** | **Extended Batch Pre-Check Reply** | `0x0044196E` | `0x0040D650` | `[0xAA][existing_count:u32_le][records: (path_len:u32_le, peer_find_data:320B, src_find_data:320B, path:bytes)...]` (response to `0x16` with both peer and source `WIN32_FIND_DATAA` for overwrite comparison dialog) |
-| **`0xAB`** | **Batch Unreadable Files Notification** | `0x004416AE` | `0x0040D840` | `[0xAB][failed_count:u32_le][records: (path_len:u32_le, win32_err:u32_le, path:bytes)...]` (files that failed `FindFirstFile`/`CreateFile` during `0x0C`) |
-| **`0xAC`** | **Formatted Win32 Error Strings Reply** | `0x00441CC4` | `0x0040BA16` | `[0xAC][count:u32_le][records: (err_code:u32_le, msg_len:u32_le, formatted_msg:bytes)...]` (response to `0x17` via `FormatMessageA`) |
+| **`0xA6`** | **Batch Zero-Length Files / Empty Dirs** | `0x00441602` | `0x0040CFEF` | `[0xA6][req_id:u32_le][item_count:u16_le][item_ids:u32_le[item_count]]` (`7 + 4 * item_count` bytes; batch items with 0 data bytes) |
+| **`0xA7`** | **Batch Download Complete ACK** | `0x0044175A` | `0x0040D210` | `[0xA7][req_id:u32_le][status:u16_le]` (7 bytes total; signals end of `0x10`/`0x35`/`0x36` batch download) |
+| **`0xA8`** | **Batch Upload Pre-Check Reply** | `0x004418C9` | `0x0040D290` | `[0xA8][flag0:u8][insufficient_space:u8][has_conflicts:u8][flag3:u8][req_id:u32_le][conflict_count:u32_le][conflict_item_ids:u32_le[conflict_count]]` (`13 + 4 * conflict_count` bytes; response to `0x13`) |
+| **`0xA9`** | **Batch Upload Error Notification** | `0x004417A0` | `0x0040D420` | `[0xA9][item_id:u32_le][win32_error:u32_le][status:u32_le]` (13 bytes in Windows mode; appends `"ErrStr"` + `err_str_len:u32_le` + `err_str:wchar_t[]` in `0x10` mode) |
+| **`0xAA`** | **Extended Batch Pre-Check Reply** | `0x0044196E` | `0x0040D650` | `[0xAA][flag0:u8][flag1:u8][flag2:u8][flag3:u8][req_id:u32_le][conflict_count:u32_le][extra_count:u32_le][conflict_item_ids:u32_le[conflict_count]][extra_pairs: (item_id:u32_le, val:u32_le)[extra_count]]` (`17 + 4 * conflict_count + 8 * extra_count` bytes; response to `0x16`) |
+| **`0xAB`** | **Batch Unreadable Files Notification** | `0x004416AE` | `0x0040D840` | `[0xAB][req_id:u32_le][failed_count:u16_le][item_ids:u32_le[failed_count]]` (`7 + 4 * failed_count` bytes; items that failed `FindFirstFile`/`CreateFile` during batch download) |
+| **`0xAC`** | **Formatted Win32 Error Strings Reply** | `0x00441CC4` | `0x0040BA16` | `[0xAC][count:u32_le][records: (err_code:u32_le, msg_len:u32_le, formatted_msg:wchar_t)...]` (response to `0x38` via `FormatMessage`; `formatted_msg` is UTF-16LE) |
 
 > [!CAUTION]
 > **Opcode `0xA2` Protocol Trap:**

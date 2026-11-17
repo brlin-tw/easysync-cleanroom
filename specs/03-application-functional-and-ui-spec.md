@@ -122,8 +122,8 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 
 ### 4.3 Batch Upload (`Local -> Remote`, Multiple Files & Subdirectories)
 1. Recursively enumerate all selected local files and directories to compute total byte count and relative paths.
-2. **Batch Overwrite Pre-Check:** Send `0x16` (**Extended Batch Pre-Check**) or `0x13` (**Batch Pre-Check**) containing the target base directory and all relative paths.
-3. Receive `0xAA` (or `0xA8`) listing only the conflicting files that already exist on the remote peer.
+2. **Batch Overwrite Pre-Check:** Send `0x16` (**Extended Batch Pre-Check**) or `0x13` (**Batch Pre-Check**) containing `total_size`, `flags`, and all `(item_id, dest_path)` records.
+3. Receive `0xAA` (or `0xA8`) returning space/conflict status flags and the `conflict_item_ids` of files that already exist on the remote peer.
 4. Iterate through conflicting items with Dialog `133` (`Yes`, `Yes to All`, `No`, `Cancel`) to filter the upload list.
 5. Send file and directory records, create remote directories via `0x07` (`CreateDirectory`), and stream file chunks via `0x0C`.
 6. Wait for `0xA1` (`status == 0`) or `0xA9` (Batch Error). If an unfamiliar Win32 error code is returned, optionally send `0x38` (**Format Win32 Error Codes**) and display the peer's `0xAC` formatted error message.
