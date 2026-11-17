@@ -65,7 +65,7 @@ The RX reassembler thread dequeues `0x10000`-byte blocks from the RX queue and r
 `EasySuite.exe` supports connecting a Windows x86 host (little-endian) to PowerPC Mac OS or little-endian POSIX/Unix peers via a global platform mode variable at `[0x00480000]`, configured when Client Command `0x01` (**Query Peer Root / Drives**) is received (`0x0043D492..0x0043D4B5`):
 - **Default (`[0x00480000] == 0`, Windows/x86/ARM little-endian peers):** All multi-byte integers (`uint16`, `uint32`, `int64`) inside wire command/reply payloads (and inside the 552-byte directory entry struct) are **little-endian**, paths use `\`, and error codes are formatted with `KERNEL32.DLL!FormatMessageA` (`0x00402372`).
 - **Mac Peer Mode (`[0x00480000] == 0x10`, `flags & 0x10 != 0`):** Multi-byte integers in command headers, UTF-16 characters, and directory entries are byte-swapped (`0x004029C1`, `0x004029CC`, `0x004029F4`, `0x00402AC6`, `0x00442525`). Paths are normalized to `/` (`0x00402B88`), error codes are formatted with `MSVCRT.dll!strerror` (`0x004023AE`), abort/cancel commands (`0x0D`/`0x0F`/`0x11`) append `"ErrStr"`, and handlers gate on `[0x7ADBF4] != 0`.
-- **Little-Endian POSIX/Unix Peer Mode (`[0x00480000] == 0x20`, `flags & 0x20 != 0`):** Keeps all multi-byte integers and UTF-16LE strings **little-endian** (no byte-swapping), but normalizes outgoing UTF-16LE path separators from `\` to `/` (`0x00402B88`), formats error codes via `MSVCRT.dll!strerror` (`0x004023AE`), appends the `"ErrStr"` suffix on `0x0D`/`0x0F`/`0x11`, and gates server handlers on `[0x45CB00] != 0`.
+- **Little-Endian POSIX/Unix Peer Mode (`[0x00480000] == 0x20`, `flags & 0x20 != 0`):** Keeps all multi-byte integers and UTF-16LE strings **little-endian** (no byte-swapping), formats error codes via `MSVCRT.dll!strerror` (`0x004023AE`), appends the `"ErrStr"` suffix on `0x0D`/`0x0F`/`0x11`, gates server/client handlers on `[0x45CB00] != 0` (statically initialized to `1`), and enables extended root-name/path records in `0xA4` (`0x0040F239` / `0x00435DAF`). Note that client command senders (`0x0040DB30`, `0x0040DBF4`, `0x0040F511`, etc.) only invoke `0x00402B88` (`\` $\rightarrow$ `/`) when `[0x00480000] == 0x10`, **not** when `[0x00480000] == 0x20`.
 
 ---
 
@@ -80,7 +80,7 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | **`0x01`** | **Query Peer Root / Drives** | `0x0040D9C9` | `0x0043D479` | `0xA4` (and `0xA1`) | `[0x01][flags:u8][code_page:u16_le][name_len:u8][computer_name:bytes]` (11 bytes total for host query; Section 4.2.1) |
 | **`0x02`** | **Notify / Set Active Remote Directory** | `0x0040DA90` | `0x0043D577` | `0xA1` (`status=0`) | `[0x02][path_len:u8][dir_path:bytes]` (folder-change notification; Section 4.2.2) |
 | **`0x03`** | **Refresh Current Directory** | — | `0x0043D64D` | `0xA1` (`status=0`), then `0xA2`; or `0xA1` (`status=3`) | `[0x03]` (1 byte; re-lists active directory on peer, returns 24B 0xA1 `status=0` followed by 0xA2 listing, or `status=3` on error) |
-| **`0x04`** | **Change / List Remote Directory** | `0x0040DB44` | `0x0043D741` | `0xA1` (`status=0`), then `0xA2`; or `0xA1` (`status=1`) | `[0x04][path_len:u16_le][dir_path:wchar_t]` (emits 24B 0xA1 status=0 followed by 552B `0xA2` listing, or 24B 0xA1 status=1 on error; Section 4.2.3) |
+| **`0x04`** | **Change / List Remote Directory** | `0x0040DB30` | `0x0043D741` | `0xA1` (`status=0`), then `0xA2`; or `0xA1` (`status=1`) | `[0x04][path_len:u16_le][dir_path:wchar_t]` (emits 24B 0xA1 status=0 followed by 552B `0xA2` listing, or 24B 0xA1 status=1 on error; Section 4.2.3) |
 | **`0x05`** | **Select Remote Drive (Legacy/No-op)** | `0x0040DC28` | `0x0043D394` | — | `[0x05]` (1 byte; legacy/no-op, jumps to exit `0x0043D42A`) |
 | **`0x06`** | **Remove Remote Directory** | `0x0040EE3A` | `0x0043D90F` | `0xA1` (`status=0` or `1`) | `[0x06][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `RemoveDirectoryW`, replies 24B `0xA1`) |
 | **`0x07`** | **Create Remote Directory** | `0x0040EF0A` | `0x0043DA61` | `0xA1` (`status=0` or `1`) | `[0x07][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `CreateDirectoryW`, replies 24B `0xA1`) |
@@ -160,8 +160,8 @@ Offset  Size        Type          Field
   > [!NOTE]
   > Opcode `0x02` is strictly a notification command; it does **not** call `FindFirstFileA` or enumerate directory contents. Directory listing and enumeration is handled separately by Opcode `0x04` (`0x0040DB44` / `0x0043D741`) or refreshed via Opcode `0x03` (`0x0043D64D`), which return 552-byte structures via Server Reply **`0xA2`**.
 
-#### 4.2.3 `0x04` — Change / List Remote Directory (`0x0040DB44` / `0x0043D741`)
-Requests the remote host to change to the target directory and return its full directory listing. Constructed at `0x0040DB44` and handled at `0x0043D741`:
+#### 4.2.3 `0x04` — Change / List Remote Directory (`0x0040DB30` / `0x0043D741`)
+Requests the remote host to change to the target directory and return its full directory listing. Constructed at `0x0040DB30` (called by UI navigation at `0x00435E8E` $\rightarrow$ `0x00435FE7`) and handled at `0x0043D741`:
 
 ```text
 Offset  Size        Type          Field
@@ -169,6 +169,11 @@ Offset  Size        Type          Field
 +0x01   2           uint16_le     path_len (P, byte length of dir_path)
 +0x03   P           bytes         dir_path (UTF-16LE wchar_t target directory path on peer, e.g. "C:\\")
 ```
+
+- **Client Behavior (`0x00435E8E` / `0x0040DB30`):**
+  1. `0x00435E8E` takes `(display_name, remote_path)` for the selected item. If `display_name` is empty (`[eax - 8] == 0` at `0x00435EA9`), it aborts immediately (`0x0043659B`) **without sending `0x04`**.
+  2. `0x00435F5B..0x00435F7C` checks whether the last `wchar_t` of `remote_path` equals `0x005C` (`L'\\'`); if not, it appends `L'\\'`.
+  3. `0x0040DB30` only calls `0x00402B88` (`\` $\rightarrow$ `/`) when `[0x00480000] == 0x10` (Mac mode). In `[0x00480000] == 0x20` (POSIX mode), `0x0040DB67` branches to `0x0040DBC6` and transmits `remote_path` verbatim—meaning a POSIX root path such as `"/"` is sent on the wire as `"/\\"`. POSIX servers must accept/strip trailing `\` (or treat `"/\\"` as `"/"`).
 
 - **Server Behavior (`0x0043D741`):**
   1. Reads `path_len` as a 16-bit little-endian integer (`dx = word ptr [ecx]`).
@@ -197,22 +202,20 @@ Offset  Size        Type          Field
   1. Unpacks `flags` (`payload[0]`), `req_id` (`payload[1..4]`), `file_size` (`payload[5..12]`), `dest_path_len` (`payload[13..14]`), and copies `dest_path` starting at `payload[15]` (`+0x10` from packet start).
   2. Converts `dest_path` to local character encoding via `WideCharToMultiByte` and normalizes separators.
   3. Inspects destination file state via `GetFileAttributesEx`:
-     - If the destination path already exists and `flags == 0` (no overwrite), immediately transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 2`, `req_id = req_id`) and terminates transfer initiation.
+        + If the destination path already exists and `flags == 0` (no overwrite), immediately transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 2`, `req_id = req_id`) and terminates transfer initiation.
   4. Checks target volume available free space via `GetDiskFreeSpaceEx`:
-     - If available free bytes are less than `file_size`, immediately transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 6`, `req_id = req_id`) and aborts transfer.
+        + If available free bytes are less than `file_size`, immediately transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 6`, `req_id = req_id`) and aborts transfer.
   5. If `file_size == 0` (zero-length file), creates the file directly, applies empty sizing, and transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 7`, `req_id = req_id`). The file transfer is complete; no `0x0C` chunks are required.
   6. If `file_size > 0`, creates or opens the destination file handle for writing (`CFile::Open` with `modeCreate | modeWrite`):
-     - If creation fails (e.g. invalid path, path is a directory, access denied), transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 1`, `win32_error = GetLastError()`).
-     - If creation succeeds, transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 0`, `req_id = req_id`) and registers the open file context to await incoming streaming chunks via opcode **`0x0C`** (`Upload File Data Chunk`).
+        + If creation fails (e.g. invalid path, path is a directory, access denied), transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 1`, `win32_error = GetLastError()`).
+        + If creation succeeds, transmits Server Reply **`0xA1`** (`req_opcode = 0x0A`, `status = 0`, `req_id = req_id`) and registers the open file context to await incoming streaming chunks via opcode **`0x0C`** (`Upload File Data Chunk`).
 
 > [!CAUTION]
 > **Stack Buffer Overflow in EasySuite (`0x0043DF17`):**
 > In `EasySuite.exe`, `0x0043DF17` unpacks `dest_path` into a fixed 1024-byte (`0x400`) stack buffer using an unbounded `memcpy` of `dest_path_len` bytes.
 > Transmitting an oversized packet (such as bundling file contents directly into `0x0A`) or sending a corrupted packet where `dest_path_len > 1024` overflows the stack buffer and corrupts the SEH exception handler, instantly crashing `EasySuite.exe` with an Access Violation (`0xC0000005`). Because the server process terminates, no `0xA1` reply is sent, and the OTi-2108 link falls idle (`action_code = 1`). Clean-room implementations MUST ensure `dest_path_len` does not exceed 1024 bytes (512 WCHARs).
-
-> [!IMPORTANT]
-> **Target Path Must Include Filename:**
-> Opcode `0x0A` requires the full destination file path including the target filename (e.g. `C:\Windows\Temp\README.md`). Supplying only a directory path (e.g. `C:\Windows\Temp\`) causes `CFile::Open` to fail with Win32 error `5` (`ERROR_ACCESS_DENIED`), resulting in `0xA1` failure (`status = 1`).
+>
+> In addition, opcode `0x0A` requires the full destination file path including the target filename (e.g. `C:\Windows\Temp\README.md`). Supplying only a directory path (e.g. `C:\Windows\Temp\`) causes `CFile::Open` to fail with Win32 error `5` (`ERROR_ACCESS_DENIED`), resulting in `0xA1` failure (`status = 1`).
 
 #### 4.2.5 `0x0B` — Single File Download Request (`0x0040DBF4` / `0x0043E4DA`)
 Requests the remote peer to transmit a single file back to the initiator:
@@ -228,10 +231,10 @@ Offset  Size        Type          Field
 ```
 
 - **Wire Layout Characteristics:**
-  - Base header and length fields comprise exactly 9 bytes (`1 + 4 + 2 + 2`).
-  - Total packet length is `9 + src_path_len + dest_path_len` bytes.
-  - `src_path`: full remote path to the file to be read (e.g. `C:\MSDOS.SYS`), UTF-16LE encoded without null terminator.
-  - `dest_path_len`: byte count of the optional client destination path string. If omitted, `dest_path_len` MUST be set to `0x0000` (2 bytes); omitting this field causes offset desynchronization and server crashes.
+    - Base header and length fields comprise exactly 9 bytes (`1 + 4 + 2 + 2`).
+    - Total packet length is `9 + src_path_len + dest_path_len` bytes.
+    - `src_path`: full remote path to the file to be read (e.g. `C:\MSDOS.SYS`), UTF-16LE encoded without null terminator.
+    - `dest_path_len`: byte count of the optional client destination path string. If omitted, `dest_path_len` MUST be set to `0x0000` (2 bytes); omitting this field causes offset desynchronization and server crashes.
 
 - **Server Behavior (`0x0043E4DA`):**
   1. Unpacks `req_id` (`+0x01`) and `src_path_len` (`+0x05`). Copies `src_path` (`+0x07`) into an internal stack buffer.
@@ -239,34 +242,34 @@ Offset  Size        Type          Field
   3. Opens the requested source file via `CreateFileW(src_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, ...)`.
   4. If opening fails (e.g. file not found, access denied), immediately emits a 24-byte Server Reply **`0xA1`** (`req_opcode = 0x0B`, `status = 1`, `win32_error = GetLastError()`) and aborts transfer.
   5. If opening succeeds, queries 64-bit file size and dispatches according to file length:
-     - **Mode 1: Zero-Length File (`file_size == 0`):**
-       Emits a 24-byte Server Reply **`0xA1`** (`req_opcode = 0x0B`, `status = 7`, `req_id = req_id`). The client touches/creates a 0-byte local file and completes the transfer immediately without any streaming chunks.
-     - **Mode 2: Small File (`file_size <= 64,512` bytes / `0xFC00`):**
-       Reads up to 64,512 bytes into memory and emits a single inline Server Reply **`0xA1`** of size `24 + file_size` bytes (`req_opcode = 0x0B`, `status = 9`, `req_id = req_id`). The raw file payload starts directly at offset `+0x18`:
-       ```text
-       Offset  Size        Type          Field
-       +0x00   1           uint8         opcode = 0xA1
-       +0x01   1           uint8         req_opcode = 0x0B
-       +0x02   1           uint8         status = 9 (Inline Small File Delivery)
-       +0x03   4           uint32_le     req_id
-       +0x07   4           uint32_le     win32_error = 0
-       +0x0B   4           uint32_le     file_size_low
-       +0x0F   4           uint32_le     file_size_high
-       +0x13   1           uint8         flags = 2
-       +0x14   4           uint32_le     data_len (equal to file_size_low)
-       +0x18   data_len    bytes         file_data (Raw file contents)
-       ```
-       The client directly writes the embedded `file_data` to disk and completes the transfer. No `0xA3` chunks are transmitted.
-     - **Mode 3: Large File (`file_size > 64,512` bytes):**
-       Emits an initial 24-byte Server Reply **`0xA1`** (`req_opcode = 0x0B`, `status = 0`, `req_id = req_id`, `file_size_low`, `file_size_high`), then streams the file content in chunks using Server Reply **`0xA3`** (**File Download Data Chunk**; Section 5.1).
+        + **Mode 1: Zero-Length File (`file_size == 0`):**
+          Emits a 24-byte Server Reply **`0xA1`** (`req_opcode = 0x0B`, `status = 7`, `req_id = req_id`). The client touches/creates a 0-byte local file and completes the transfer immediately without any streaming chunks.
+        + **Mode 2: Small File (`file_size <= 64,512` bytes / `0xFC00`):**
+          Reads up to 64,512 bytes into memory and emits a single inline Server Reply **`0xA1`** of size `24 + file_size` bytes (`req_opcode = 0x0B`, `status = 9`, `req_id = req_id`). The raw file payload starts directly at offset `+0x18`:
+
+          ```text
+          Offset  Size        Type          Field
+          +0x00   1           uint8         opcode = 0xA1
+          +0x01   1           uint8         req_opcode = 0x0B
+          +0x02   1           uint8         status = 9 (Inline Small File Delivery)
+          +0x03   4           uint32_le     req_id
+          +0x07   4           uint32_le     win32_error = 0
+          +0x0B   4           uint32_le     file_size_low
+          +0x0F   4           uint32_le     file_size_high
+          +0x13   1           uint8         flags = 2
+          +0x14   4           uint32_le     data_len (equal to file_size_low)
+          +0x18   data_len    bytes         file_data (Raw file contents)
+          ```
+
+          The client directly writes the embedded `file_data` to disk and completes the transfer. No `0xA3` chunks are transmitted.
+        + **Mode 3: Large File (`file_size > 64,512` bytes):**
+          Emits an initial 24-byte Server Reply **`0xA1`** (`req_opcode = 0x0B`, `status = 0`, `req_id = req_id`, `file_size_low`, `file_size_high`), then streams the file content in chunks using Server Reply **`0xA3`** (**File Download Data Chunk**; Section 5.1).
 
 > [!CAUTION]
 > **Stack Buffer Overflow in EasySuite (`0x0043E4DA`):**
 > In `EasySuite.exe`, `0x0043E4DA` copies `src_path` into a fixed 1024-byte (`0x400`) stack buffer using an unbounded `memcpy` of `src_path_len` bytes at `0x0043E566`.
 > Transmitting a malformed packet where path length fields are misaligned (such as omitting length fields or sending ASCII characters that land in the length offset, e.g. `'C:'` = `0x3A43` = 14,915 bytes) overflows the stack buffer and corrupts the SEH exception handler at `fs:[0]`, instantly crashing `EasySuite.exe` with an Access Violation (`0xC0000005`). Because the server process dies, no reply is ever sent, and the OTi-2108 link falls idle. Clean-room implementations MUST ensure `src_path_len` and `dest_path_len` do not exceed 1024 bytes.
-
-> [!IMPORTANT]
-> **Mandatory `dest_path_len` Field:**
+>
 > Even if a client does not supply a local destination path string, the 2-byte `dest_path_len` field (`0x0000`) **MUST** be present immediately after `src_path`. `EasySuite.exe` unconditionally reads `dest_path_len` from `[esi + src_path_len]`. Omitting this field shifts subsequent reads and leads to memory corruption.
 
 #### 4.2.6 `0x0C` — Upload File Data Chunk (`0x004450C1` / `0x00440E41`)
@@ -290,8 +293,8 @@ Offset  Size        Type          Field
   2. When `chunk_index == total_chunks`, automatically flushes and closes the file handle.
   3. **Success Path:** If the write succeeds (`win32_error == 0`), the server returns immediately without sending any acknowledgment reply.
   4. **Error Notification:** If a write error occurs (such as disk full or I/O failure):
-     - In single-file upload mode: sends 9-byte Server Reply **`0xA5`** (`[0xA5][item_id:u32_le][win32_error:u32_le]`).
-     - In batch upload mode: sends Server Reply **`0xA9`** (**Batch Upload Error Notification**).
+        + In single-file upload mode: sends 9-byte Server Reply **`0xA5`** (`[0xA5][item_id:u32_le][win32_error:u32_le]`).
+        + In batch upload mode: sends Server Reply **`0xA9`** (**Batch Upload Error Notification**).
 - **Transfer Finalization:**
   After transmitting all `0x0C` chunks, the client issues Opcode **`0x0E`** (`Acknowledge File Transfer Completion`, 7 bytes) to commit file timestamps and attributes. Opcode `0x0E` also emits no reply.
 
@@ -342,8 +345,8 @@ Offset  Size        Type          Field
   2. Copies `path_len` bytes into a 1,024-byte stack buffer via `memcpy`.
   3. Invokes `DeleteFileW` on the target path.
   4. Returns standard 24-byte Server Reply **`0xA1`** (`req_opcode = 0x08`, `req_id` echoed):
-     - `status = 0`, `win32_error = 0`: File successfully deleted.
-     - `status = 1`, `win32_error = GetLastError()`: Deletion failed (e.g. `ERROR_FILE_NOT_FOUND` = 2, `ERROR_ACCESS_DENIED` = 5).
+        + `status = 0`, `win32_error = 0`: File successfully deleted.
+        + `status = 1`, `win32_error = GetLastError()`: Deletion failed (e.g. `ERROR_FILE_NOT_FOUND` = 2, `ERROR_ACCESS_DENIED` = 5).
 - **Critical Opcode 0x08 Crash Pitfall:**
   > [!CAUTION]
   > Opcode `0x08` requires the 2-byte `path_len` field and UTF-16LE encoding.
@@ -363,7 +366,7 @@ Server Replies are sent by `0x0043FD2D..0x00441DA8` in response to Client Comman
 | **`0xA1`** | **Command Status / ACK / Inline Data** | `0x0043FD2D` | `0x0040BA96` | `[0xA1][req_opcode:u8][status:u8][req_id:u32_le][win32_error:u32_le][reserved:13B][optional_data:bytes]`:<br/>- Standard 24-byte ACK (`status = 0` success, `1` error, `2` conflict, `6` disk full, `7` empty file).<br/>- Small File Inline Delivery (`status = 9`, `file_size <= 64,512` bytes): 24-byte header followed by raw file payload starting at offset `+0x18`, total packet size `24 + file_size` (Section 4.2.5). |
 | **`0xA2`** | **Directory Listing Reply** | `0x00440C2D` | `0x0040C251` | `[0xA2][entry_count:u16_le][entries: Entry552[entry_count]]` (`3 + 552 * entry_count` bytes; see Section 6) |
 | **`0xA3`** | **File Download Data Chunk** | `0x004450C1` | `0x0040CF68` | `[0xA3][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][data_len:u32_le][file_data:bytes]` (Streaming chunks for files > 64,512 bytes via `0x0B` or batch downloads via `0x10`) |
-| **`0xA4`** | **Remote Logical Drives List Reply** | `0x00440FDC` | `0x0040F093` | `[0xA4][drive_count:u16_le][records: (drive_letter:char, drive_type:u8)...]` (`drive_type = GetDriveTypeA - 1`: `1`=Removable, `2`=Fixed, `3`=Remote, `4`=CDROM, `5`=RAMDisk; response to `0x01`) |
+| **`0xA4`** | **Remote Logical Drives List Reply** | `0x00440FDC` | `0x0040F093` | `[0xA4][drive_count:u16_le][records: (drive_letter:char, drive_type:u8)...]` (plus `[len1:u16][display_name:wchar_t[]][len2:u16][root_path:wchar_t[]]` per record when `drive_type` sets `0x10`/`0x20` mode; Section 5.2) |
 | **`0xA5`** | **Single-File Upload Error Notification** | `0x0043FE85` | `0x0040D7D2` | `[0xA5][item_id:u32_le][win32_error:u32_le]` (9 bytes total; emitted only when a file chunk write fails during `0x0C`; Section 4.2.6) |
 | **`0xA6`** | **Batch Zero-Length Files / Empty Dirs** | `0x00441602` | `0x0040CFEF` | `[0xA6][req_id:u32_le][item_count:u16_le][item_ids:u32_le[item_count]]` (`7 + 4 * item_count` bytes; batch items with 0 data bytes) |
 | **`0xA7`** | **Batch Download Complete ACK** | `0x0044175A` | `0x0040D210` | `[0xA7][req_id:u32_le][status:u16_le]` (7 bytes total; signals end of `0x10`/`0x35`/`0x36` batch download) |
@@ -376,6 +379,41 @@ Server Replies are sent by `0x0043FD2D..0x00441DA8` in response to Client Comman
 > [!CAUTION]
 > **Opcode `0xA2` Protocol Trap:**
 > Do **not** send opcode `0xA2` as an error reply. The peer dispatcher at `0x0040C251` treats byte `+0x01` as a 16-bit `entry_count` (`word ptr [edi]`) and allocates heap to unpack fixed 552-byte structures. Emitting a short error reply with opcode `0xA2` (such as `0xA2 [win32_err:u32]`) causes the peer to read 552 bytes out-of-bounds, fatally corrupting memory and terminating communication.
+
+### 5.2 `0xA4` — Remote Logical Drives / Roots List Reply (`0x00440FDC` / `0x0040F093`)
+
+Sent in response to Client Command `0x01` (**Query Peer Root / Drives**). The client handler at `0x0040F093` parses the payload into 12-byte drive records (`+0x00`: `drive_letter`, `+0x01`: `drive_type`, `+0x04`: `display_name` `wchar_t*`, `+0x08`: `root_path` `wchar_t*`), updates `[this + 0x70]`, and posts Win32 message `0x0FBA` (`0x0040F3CD`) to refresh the Remote Host UI pane (`0x004193BD` $\rightarrow$ `0x0042A580` $\rightarrow$ `0x0042A5DD` $\rightarrow$ `0x00435C77`).
+
+#### Wire Framing by Peer Mode
+
+1. **Default Windows Mode (`[0x00480000] == 0`, no `0x10`/`0x20` bit in `drive_type`):**
+
+    ```text
+    [0xA4][drive_count:u16_le][records: (drive_letter:u8, drive_type:u8)[drive_count]]
+    ```
+
+    - `drive_type = GetDriveTypeA - 1` (`1`=Removable, `2`=Fixed / Hard Disk, `3`=Remote, `4`=CDROM, `5`=RAMDisk).
+    - `0x00435C77` formats the UI display name (`[item + 0x08]`) as `"%s:"` (e.g. `"C:"`) and the wire path (`[item + 0x0c]`) as `L"C:"`.
+
+2. **Mac (`0x10`) and Little-Endian POSIX/Unix (`0x20`) Modes (`0x0040F0DE..0x0040F2F1`):**
+    - While reading the `drive_count` 2-byte `(drive_letter, drive_type)` headers, `0x0040F093` inspects `drive_type`:
+        + If `drive_type & 0x10 != 0`: sets `[0x00480000] = 0x10`.
+        + If `drive_type & 0x20 != 0`: sets `[0x00480000] = 0x20` (e.g. `0x22` = `0x20 | 2` for a POSIX Fixed/Hard Disk root).
+        + Masks `drive_type &= 0x0F`.
+    - **Immediately after** the `2 * drive_count` header bytes, `0x0040F093` reads **two length-prefixed UTF-16 strings for each of the `drive_count` records** (`0x0040F155` for `0x10` using `u16_be` byte lengths + UTF-16BE byte-swapped via `0x00402AC6`; `0x0040F239` for `0x20` using `u16_le` byte lengths + UTF-16LE):
+
+        ```text
+        [0xA4][drive_count:u16_le]
+        [(drive_letter:u8, drive_type:u8) * drive_count]
+        [(name_byte_len:u16, display_name:wchar_t[], path_byte_len:u16, root_path:wchar_t[]) * drive_count]
+        ```
+
+    - In `0x20` mode, `0x0040F34E` checks `[0x0045CB00] != 0` (statically `1` in `EasySuite.exe`) before committing the list.
+    - `0x00435C77` (`0x00435DAF..0x00435E45`) then **overwrites** `[item + 0x08]` (the UI "Name" column, converted to ANSI `CString` via `0x00447CD2`) with `display_name` (`record + 0x04`) and `[item + 0x0c]` (the `wchar_t*` path passed to `0x04`) with `root_path` (`record + 0x08`).
+
+> [!IMPORTANT]
+> **Why Omitting Trailing Strings in `0x20` Mode Renders an Unnamed Hard Disk and Stalls:**
+> If a peer sends `drive_type = 0x22` (`0x20 | 2`) without the two trailing UTF-16LE strings, `0x0040F239` reads past the 5-byte payload into zero-filled buffer memory (`name_byte_len = 0`, `path_byte_len = 0`), setting `display_name = L""` and `root_path = L""`. `0x00435C77` still maps `drive_type & 0x0F = 2` to `DRIVE_FIXED` (`Type = Hard Disk`), but overwrites the item's Name with `""`. Because `0x00435EA9` aborts without sending `0x04` whenever `display_name` is empty, `EasySuite.exe` displays `My Computer` $\rightarrow$ unnamed `Hard Disk` and never issues `0x04`.
 
 ---
 
@@ -469,3 +507,4 @@ The receiving server handler at `0x00441DB1` reads `xml_len`, allocates `xml_len
 | `MeSwitchAsRouter` | Initiator $\rightarrow$ Peer | Informs the peer that the initiating host will act as the ICS/NAT Router (`nicinst.exe IS`, IP `192.168.0.1`), so the peer should configure itself as a DHCP/ICS Client (`nicinst.exe IC`). |
 | `MeSwitchAsNoneRouter` | Initiator $\rightarrow$ Peer | Informs the peer that neither host requested router mode (or peer should run standard `nicinst.exe I`). |
 | `RejectSwitchAsVirtualNIC` / `Busy` | Peer $\rightarrow$ Initiator | Sent if the peer is currently busy transferring files (`0xF0A0`) or declines the switch (`0xF09F`). |
+| `LocalLibraryInformation` | Bidirectional | Sent during startup (`0x00422CBD`) with `<ExtraXmlParam>...</ExtraXmlParam>`; `0x00441E79` passes `<ExtraXmlParam>` to `0x00410058` on `0x45F8D8` and returns immediately (non-blocking). |
