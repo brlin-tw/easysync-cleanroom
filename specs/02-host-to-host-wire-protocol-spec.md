@@ -88,7 +88,7 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | **`0x09`** | **Rename Remote File or Directory** | `0x0040ECE4` | `0x0043DD10` | `0xA1` (`status=0` or `1`) | `[0x09][req_id:u32_le][old_len:u16_le][new_len:u16_le][old_path:wchar_t][new_path:wchar_t]` (calls `MoveFileW`, replies 24B `0xA1`) |
 | **`0x0A`** | **Single File Upload Request** | `0x0040E2A7` | `0x0043DF17` | `0xA1` (`status=0..7`) | `[0x0A][flags:u8][req_id:u32_le][file_size:u64_le][dest_path_len:u16_le][dest_path:wchar_t]` (16B header + UTF-16LE path; Section 4.2.4) |
 | **`0x0B`** | **Single File Download Request** | `0x0040DBF4` | `0x0043E4DA` | `0xA1` (`status=9` inline, `7` empty, `1` error); or `0xA1` (`status=0`) then `0xA3` | `[0x0B][req_id:u32_le][src_len:u16_le][src_path:wchar_t][dest_len:u16_le][dest_path:wchar_t]` (9B header/lengths + UTF-16LE paths; Section 4.2.5) |
-| **`0x0C`** | **Upload File Data Chunk** | `0x004450C1` / `0x00443EC9` | `0x00440E41` | None (on success); `0xA5` or `0xA9` (on write error) | `[0x0C][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][chunk_len:u32_le][data:bytes]` (Unacknowledged streaming; Section 4.2.6) |
+| **`0x0C`** | **Upload File Data Chunk** | `0x004450C1` / `0x00443EC9` | `0x00440E41` | None (on success); `0xA5` or `0xA9` (on write error) | `[0x0C][item_id:u32_le][total_chunks:u32_le][chunk_index:u32_le][chunk_len:u32_le][data:bytes]` (Unacknowledged streaming; Section 4.2.6) |
 | **`0x0D`** | **Abort Single File Upload (Delete Partial)** | `0x0040E9F8` | `0x0043E31E` | — | `[0x0D][item_id:u32_le][win32_error:u32_le]` (9 bytes in Windows mode; appends `"ErrStr"` + `err_str_len:u32_le` + `err_str:wchar_t[]` in `0x10`/`0x20` mode; closes handle and deletes partial destination file) |
 | **`0x0E`** | **Acknowledge File Transfer Completion** | `0x0040CB5F` | `0x0043FFA6` | — | `[0x0E][item_id:u32_le][status:u16_le]` (7 bytes; removes transfer job from `0x7adce0` after streaming completes) |
 | **`0x0F`** | **Cancel Single File Transfer (Keep Partial)** | `0x0040EB06` | `0x0043E3B4` | — | `[0x0F][item_id:u32_le][win32_error:u32_le]` (9 bytes in Windows mode; appends `"ErrStr"` + `err_str_len:u32_le` + `err_str:wchar_t[]` in `0x10`/`0x20` mode; closes handle without deleting destination file) |
@@ -279,8 +279,8 @@ Streams a chunk of binary data for an in-flight file upload:
 Offset  Size        Type          Field
 +0x00   1           uint8         opcode = 0x0C
 +0x01   4           uint32_le     item_id (Transfer item identifier)
-+0x05   4           uint32_le     chunk_index (1-based chunk sequence index)
-+0x09   4           uint32_le     total_chunks (Total chunks in file)
++0x05   4           uint32_le     total_chunks (Total chunks in file)
++0x09   4           uint32_le     chunk_index (1-based chunk sequence index)
 +0x0D   4           uint32_le     chunk_len (C, byte length of chunk payload)
 +0x11   C           bytes         chunk_data (Binary file slice)
 ```
@@ -289,10 +289,11 @@ Offset  Size        Type          Field
   1. File chunks are transmitted **unacknowledged** during normal transfer. The client pumps chunks continuously across bulk blocks without synchronously awaiting a per-chunk reply.
   2. The maximum chunk payload size per bulk block is $65,536 - 20 - 17 = 65,499$ bytes (or up to `0xFFEC` = 65,516 bytes when spanning multiple transport blocks).
 - **Server Behavior (`0x00440E41`):**
-  1. Writes `chunk_len` bytes via `WriteFile` at sequential file offset.
-  2. When `chunk_index == total_chunks`, automatically flushes and closes the file handle.
-  3. **Success Path:** If the write succeeds (`win32_error == 0`), the server returns immediately without sending any acknowledgment reply.
-  4. **Error Notification:** If a write error occurs (such as disk full or I/O failure):
+  1. Checks `chunk_index == 1` (offset `+0x09`) to decide file open mode in `0x00441195`: when `chunk_index == 1`, creates/truncates the destination file (`CREATE_ALWAYS` / `modeCreate`); when `chunk_index != 1`, opens the existing file (`OPEN_EXISTING` / `modeWrite` without `modeCreate`) and seeks to `FILE_END`. (On NT/2000/XP+ via `0x0044137C`, if `CreateFileW(..., OPEN_EXISTING)` returns `INVALID_HANDLE_VALUE` at `0x004415C2`, it skips `WriteFile` and returns `0` without calling `GetLastError()`, so no `0xA5` error is emitted.)
+  2. Writes `chunk_len` bytes via `WriteFile` at sequential file offset.
+  3. When `chunk_index == total_chunks`, automatically flushes/closes the file handle and removes `item_id` from `0x7adce0` (`0x00443AEA`).
+  4. **Success Path:** If the write succeeds (`win32_error == 0`), the server returns immediately without sending any acknowledgment reply.
+  5. **Error Notification:** If a write error occurs (such as disk full or I/O failure):
         + In single-file upload mode: sends 9-byte Server Reply **`0xA5`** (`[0xA5][item_id:u32_le][win32_error:u32_le]`).
         + In batch upload mode: sends Server Reply **`0xA9`** (**Batch Upload Error Notification**).
 - **Transfer Finalization:**
@@ -365,7 +366,7 @@ Server Replies are sent by `0x0043FD2D..0x00441DA8` in response to Client Comman
 | :---: | :--- | :--- | :--- | :--- |
 | **`0xA1`** | **Command Status / ACK / Inline Data** | `0x0043FD2D` | `0x0040BA96` | `[0xA1][req_opcode:u8][status:u8][req_id:u32_le][win32_error:u32_le][reserved:13B][optional_data:bytes]`:<br/>- Standard 24-byte ACK (`status = 0` success, `1` error, `2` conflict, `6` disk full, `7` empty file).<br/>- Small File Inline Delivery (`status = 9`, `file_size <= 64,512` bytes): 24-byte header followed by raw file payload starting at offset `+0x18`, total packet size `24 + file_size` (Section 4.2.5). |
 | **`0xA2`** | **Directory Listing Reply** | `0x00440C2D` | `0x0040C251` | `[0xA2][entry_count:u16_le][entries: Entry552[entry_count]]` (`3 + 552 * entry_count` bytes; see Section 6) |
-| **`0xA3`** | **File Download Data Chunk** | `0x004450C1` | `0x0040CF68` | `[0xA3][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][data_len:u32_le][file_data:bytes]` (Streaming chunks for files > 64,512 bytes via `0x0B` or batch downloads via `0x10`) |
+| **`0xA3`** | **File Download Data Chunk** | `0x004450C1` | `0x0040CF68` | `[0xA3][item_id:u32_le][total_chunks:u32_le][chunk_index:u32_le][data_len:u32_le][file_data:bytes]` (Streaming chunks for files > 64,512 bytes via `0x0B` or batch downloads via `0x10`) |
 | **`0xA4`** | **Remote Logical Drives List Reply** | `0x00440FDC` | `0x0040F093` | `[0xA4][drive_count:u16_le][records: (drive_letter:char, drive_type:u8)...]` (plus `[len1:u16][display_name:wchar_t[]][len2:u16][root_path:wchar_t[]]` per record when `drive_type` sets `0x10`/`0x20` mode; Section 5.2) |
 | **`0xA5`** | **Single-File Upload Error Notification** | `0x0043FE85` | `0x0040D7D2` | `[0xA5][item_id:u32_le][win32_error:u32_le]` (9 bytes total; emitted only when a file chunk write fails during `0x0C`; Section 4.2.6) |
 | **`0xA6`** | **Batch Zero-Length Files / Empty Dirs** | `0x00441602` | `0x0040CFEF` | `[0xA6][req_id:u32_le][item_count:u16_le][item_ids:u32_le[item_count]]` (`7 + 4 * item_count` bytes; batch items with 0 data bytes) |

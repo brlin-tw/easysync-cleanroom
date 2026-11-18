@@ -114,7 +114,7 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
      - `status == 6`: Disk full! Target volume has insufficient space.
      - `status == 1`: Creation failed with Win32 error (`win32_error`).
 3. **Chunk Streaming & Completion:**
-   + Stream file contents sequentially across subsequent bulk blocks using `0x0C` (`[0x0C][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][chunk_len:u32_le][chunk_data]`).
+   + Stream file contents sequentially across subsequent bulk blocks using `0x0C` (`[0x0C][item_id:u32_le][total_chunks:u32_le][chunk_index:u32_le][chunk_len:u32_le][chunk_data]`).
    + `0x0C` chunk transmission is unacknowledged during normal/successful transfers; the client streams chunks without waiting for per-chunk replies (the peer emits `0xA5` or `0xA9` only if a write error occurs).
    + Send `0x0E` (`[0x0E][item_id:u32_le][status:u16_le]`) once all chunks are transmitted to finalize timestamps and commit file attributes. Opcode `0x0E` also emits no reply.
    + Update Dialog `131` (`Progress Information`) during transmission.
@@ -143,7 +143,7 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
    + **Case 3: Small File Delivery (`status == 9`, `file_size <= 64,512` bytes):**
      Server returns a single inline Server Reply **`0xA1`** of size `24 + file_size` bytes. The file payload begins directly at offset `+0x18` (length at `+0x14`). Client writes the embedded file bytes directly to the local file and finalizes the transfer without expecting any `0xA3` chunks.
    + **Case 4: Large File Streaming (`status == 0`, `file_size > 64,512` bytes):**
-     Server returns an initial 24-byte Server Reply **`0xA1`** (`req_opcode = 0x0B`, `status = 0`, `file_size_low`, `file_size_high`), then streams chunk slices using Server Reply **`0xA3`** (`[0xA3][item_id:u32_le][chunk_index:u32_le][total_chunks:u32_le][chunk_len:u32_le][chunk_data]`). Client writes each chunk sequentially until `chunk_index + 1 == total_chunks`.
+     Server returns an initial 24-byte Server Reply **`0xA1`** (`req_opcode = 0x0B`, `status = 0`, `file_size_low`, `file_size_high`), then streams chunk slices using Server Reply **`0xA3`** (`[0xA3][item_id:u32_le][total_chunks:u32_le][chunk_index:u32_le][chunk_len:u32_le][chunk_data]`). Client writes each chunk sequentially until `chunk_index == total_chunks` (1-based).
 4. **Finalization:** Client applies timestamps and attributes locally and updates Dialog `131` (`Progress Information`).
 
 ### 4.5 Batch Download (`Remote -> Local`, Multiple Files & Subdirectories)
