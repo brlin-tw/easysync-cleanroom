@@ -38,8 +38,9 @@ sudo python3 tools/probe_oti2108_hw.py --sg-dev /dev/sgX
 ```
 
 Archived hardware probe outputs from a physical OTi-2108 unit (`chip_bcd = 2108`, `firmware_rev = 3`, build date `"030729"`, 512 KB buffer):
-- [`dumps/probe_oti2108_hw.libusb.out.txt`](dumps/probe_oti2108_hw.libusb.out.txt)
-- [`dumps/probe_oti2108_hw.sg.out.txt`](dumps/probe_oti2108_hw.sg.out.txt)
+
+* [`dumps/probe_oti2108_hw.libusb.out.txt`](dumps/probe_oti2108_hw.libusb.out.txt)
+* [`dumps/probe_oti2108_hw.sg.out.txt`](dumps/probe_oti2108_hw.sg.out.txt)
 
 ## Licensing
 
