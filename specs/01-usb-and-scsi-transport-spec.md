@@ -319,18 +319,29 @@ sequenceDiagram
 Once initialized, a dedicated worker thread (`0x00433260` $\rightarrow$ `0x0041BE56`) runs a 3-state loop (`state = 0` Poll, `state = 1` Bulk Write, `state = 2` Bulk Read) synchronized via a per-device mutex:
 
 ### 6.1 State 0: Poll (`0xD8 0x00`, `op_type = 3`)
-1. Compute `local_queued_blocks = min(tx_queue.count(), max_blocks_per_burst)` and pass it in `cdb[3..4]` of `0xD8 0x00` (`op_type = 3`).
-2. Read the 7-byte response `resp[0..6]` (`0x0041C4AF..0x0041C4DE` / `usbnic.sys` `0x00011650`) and dispatch on `action_code = resp[0]` (jump table at `0x0041C7F5`):
+1. If no device handle is open (`[0x4800A4] == 0`), the SPTI worker (`0x0041C2D8`, parallel ASPI worker at `0x0041C815`) sleeps **200 ms** (`SleepEx(200, TRUE)` at `0x0041C7B6`) and retries.
+2. Otherwise, compute `local_queued_blocks = min(tx_queue.count(), max_blocks_per_burst)` and pass it in `cdb[3..4]` of `0xD8 0x00` (`op_type = 3`).
+3. If `0xD8 0x00` (`op_type = 3`) returns an error (`ax != 0`, `0x0041C764`):
+   + `ax == 1`: posts `0x0FBB` and sleeps **50 ms** (`0x32`).
+   + `ax == 2`: posts `0x0FBB` and sleeps **100 ms** (`0x64`).
+   + `ax == 0xF`: clears poll-loop flag `[0x480020] = 0`, posts `0x0FBB`, sleeps **100 ms**, and exits the thread.
+   + Any other error code: sleeps **50 ms**.
+4. On success (`ax == 0`), read the 7-byte response `resp[0..6]` (`0x0041C4AF..0x0041C4DE` / `usbnic.sys` `0x00011650`) and dispatch on `action_code = resp[0]` (jump table at `0x0041C7F5`; ASPI jump table at `0x0041CCDF`):
 
 | `action_code` | Target VA | Meaning | State Transition & Action |
 | :---: | :--- | :--- | :--- |
-| **`0` or `1`** | `0x0041C5E4` | **Idle / Link Healthy** | Emits link-alive status (`0xFF00`). Stays in `state = 0` (sleeps briefly before next poll). |
-| **`2`** | `0x0041C5F2` | **Virtual Disk Sector Read** | Extracts `lba = be32(resp[1..4])` (`[ebp-0x18]`) and `sec_cnt = be16(resp[5..6])` (`[ebp-0x20]`). Calls `0x0041D9B1` to seek backing file (`[this+0x654]`) to `lba * 512`, read `sec_cnt * 512` bytes, and write them to the bridge via `0xDA 0x2A`. Stays in `state = 0`. |
-| **`3`** | `0x0041C609` | **Virtual Disk Sector Write** | Extracts `lba = be32(resp[1..4])` (`[ebp-0x18]`) and `sec_cnt = be16(resp[5..6])` (`[ebp-0x20]`). Calls `0x0041DA5C` to read `sec_cnt * 512` bytes from the bridge via `0xDA 0x28` and write them to backing file (`[this+0x654]`) at `lba * 512`. Stays in `state = 0`. |
-| **`4`** | `0x0041C627` | **Drive / Peer Mode Event** | Posts UI notification `0x0FBB` (`WM_USER` event) indicating media or peer mode change. Stays in `state = 0`. |
-| **`5`** | `0x0041C4EE` | **Remote Has Bulk Blocks** | Extracts `remote_blocks = be16(resp[1..2])`, stores in `[this+0x618]`, and transitions to **`state = 2` (Bulk Read)**. |
-| **`6`** | `0x0041C5B1` | **Bridge Ready for Bulk Write (Single/Capped)** | Sets `blocks_to_send = local_queued_blocks` (`[this+0x61C]`) and transitions to **`state = 1` (Bulk Write)**. |
-| **`7`** | `0x0041C584` | **Bridge Ready for Bulk Write (Batch)** | Sets `blocks_to_send = min(local_queued_blocks, max_burst)` (`[this+0x61C]`) and transitions to **`state = 1` (Bulk Write)**. |
+| **`0` or `1`** | `0x0041C5E4` | **Idle / Peer Offline** | Sets status `0xFF00` and sleeps **100 ms** (`0x64`). If the session is currently marked connected (`[0x4800AC] != 0`), posts `0x0FBD` (`wParam = 0xFF00`) to transition the UI/plugins to **Peer Offline** (`ThunderBirdRemoteOffline`, `[0x4800B0] = 0`, `[0x4800AC] = 0`). If Transfer Line Mode is not yet active (`[0x45FA94] == 0`), issues `0xD8 0x01` (`cmd = 5, val = 0x007F`) and sets `[0x45FA94] = 1`. |
+| **`2`** | `0x0041C5F2` | **Virtual Disk Sector Read** | Extracts `lba = be32(resp[1..4])` (`[ebp-0x18]`) and `sec_cnt = be16(resp[5..6])` (`[ebp-0x20]`). Calls `0x0041D9B1` to seek backing file (`[this+0x654]`) to `lba * 512`, read `sec_cnt * 512` bytes, and write them to the bridge via `0xDA 0x2A`. Sleeps **1 ms**; stays in `state = 0`. |
+| **`3`** | `0x0041C609` | **Virtual Disk Sector Write** | Extracts `lba = be32(resp[1..4])` (`[ebp-0x18]`) and `sec_cnt = be16(resp[5..6])` (`[ebp-0x20]`). Calls `0x0041DA5C` to read `sec_cnt * 512` bytes from the bridge via `0xDA 0x28` and write them to backing file (`[this+0x654]`) at `lba * 512`. Sleeps **1 ms**; stays in `state = 0`. |
+| **`4`** | `0x0041C627` | **Drive / Peer Mode Event** | Posts UI notification `0x0FBB` (`WM_USER` event) to trigger hardware/peer re-verification and sleeps **5 ms**. Stays in `state = 0`. |
+| **`5`** | `0x0041C4EE` | **Remote Has Bulk Blocks** | Extracts `remote_blocks = be16(resp[1..2])`, stores in `[this+0x618]`, sets status `0xFF02`, and transitions to **`state = 2` (Bulk Read)**. |
+| **`6`** | `0x0041C5B1` | **Bridge Ready for Bulk Write (Single/Capped)** | Sets status `0xFF03`, `blocks_to_send = local_queued_blocks` (`[this+0x61C]`), and transitions to **`state = 1` (Bulk Write)**. |
+| **`7`** | `0x0041C584` | **Bridge Ready for Bulk Write (Batch)** | Sets status `0xFF01`, `blocks_to_send = min(local_queued_blocks, max_burst)` (`[this+0x61C]`), and transitions to **`state = 1` (Bulk Write)**. |
+
+5. **Link Liveness & Mode Verification (`0x0041C680` & `0x0FBB` Handler `0x0041CE3F`):**
+   + When `di` is not `0xFF00`/`0x0A`/`0xFF06`, `[0x4800B0] == 0`, and `[0x45FA94] != 0`, the poll thread issues `0xD8 0x00` (`op_type = 5`) to verify the peer is still in `0x007F`; if not, it clears `[0x45FA94] = 0` and posts `0x0FBB`.
+   + Posting `0x0FBB` invokes `0x0041CE07` $\rightarrow$ `0x0041CE3F`, which runs `TEST UNIT READY` (`0x00`) to check local USB device presence (closing the handle, posting `0x0FBD wParam=2` $\rightarrow$ `ThunderBirdQuit`, and re-scanning drives if it fails), followed by `0xD8 0x00` (`op_type = 5`) to check peer mode (canceling transfers and posting `0x0FBD wParam=0xFF06` $\rightarrow$ `ThunderBirdRemoteOffline` and alert `0xF042` if `resp != 0x007F`).
+   + When transitioning from disconnected (`[0x4800B0] == 0`) on `0x0FBD` (`0xFF01..0xFF03`, `0`, `0x0D..0x0E`, `0x12..0x13`), the UI handler (`0x004198F1`) queries `0xD8 0x00` (`op_type = 2`) for peer USB speed (`resp[1] == 0x20`), issues Client Command `0x01`, and sets `[0x4800B0] = 1`, `[0x4800AC] = 1`.
 
 ### 6.2 State 1: Bulk Write (`0x0041BE83`)
 1. Sends `0xD8 0x01` (`cmd = 4`, `val = timeout_sec * 1000`).
