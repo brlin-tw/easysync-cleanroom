@@ -11,13 +11,16 @@ This project specifically targets Oti-2108 USB host-to-host file transfer cables
 
 These five specification documents contain all byte-level framing, state machines, command opcodes, XML schemas, and UI functional requirements needed to build a clean-room, cross-platform implementation without accessing any proprietary binaries:
 
-| Document | Scope & Contents |
-| :--- | :--- |
-| [**`specs/00-overview-and-architecture.md`**](specs/00-overview-and-architecture.md) | Hardware identity (`0ea0:2108`), self-extracting container inventory, dual-mode architecture (**Transfer Line Mode `0x007F`** vs **Virtual NIC Mode `0x0044`**), cross-platform architecture blueprint, and clean-room firewall rules. |
-| [**`specs/01-usb-and-scsi-transport-spec.md`**](specs/01-usb-and-scsi-transport-spec.md) | Dual-backend transport abstraction (direct `libusb` Bulk-Only Transport `USBC`/`USBS` with tag `0x08210827` and OS SCSI Pass-Through `SG_IO`/`SPTI`), all 10 SCSI/vendor CDBs (`0x00`, `0x28`, `0xF0`, `0xD8 0x00`, `0xD8 0x01`, `0xD9 0x28`, `0xD9 0x2A`, `0xDA 0x28`, `0xDA 0x2A`, `0xDB 0x28`), 24-bit sense code mapping, 8-state poll loop (`action_code 0..7`), and verified physical hardware captures. |
-| [**`specs/02-host-to-host-wire-protocol-spec.md`**](specs/02-host-to-host-wire-protocol-spec.md) | 64 KB (`0x10000`) bulk block framing (20-byte little-endian header + `0xFFEC` payload), multi-block packet splitter/reassembler, all 25 Client Command opcodes (`0x01..0x17`, `0x32..0x39`), all 12 Server Reply opcodes (`0xA1..0xAC`), 552-byte (`0x228`) directory entry layout, and `<OTIMSG>` / `<ExtraXmlCommand>` XML schemas. |
-| [**`specs/03-application-functional-and-ui-spec.md`**](specs/03-application-functional-and-ui-spec.md) | Dual-pane Local/Remote file manager UI, 8 menus, 7 dialogs, 11 language locales, folder synchronization engine (`My Briefcase`), conflict resolution workflows, and legacy plugin boundaries (`ECN001.DLL` Outlook sync and `ProdLic.dll` flash license check). |
-| [**`specs/04-virtual-nic-and-mode-switch-spec.md`**](specs/04-virtual-nic-and-mode-switch-spec.md) | Mode switching (`0x007F` $\leftrightarrow$ `0x0044`), `35,328`-byte (`0x8A00`) Ethernet batch buffer framing (21-byte header + `[frame_len_u16_le][eth_frame]` stream + `0xFFFF` terminator), synthetic MAC assignment (`00:10:60:21:08:01`), and cross-platform TAP/TUN daemon design. |
+* [Overview & System Architecture](specs/00-overview-and-architecture.md)  
+  Hardware identity (`0ea0:2108`), self-extracting container inventory, dual-mode architecture (**Transfer Line Mode `0x007F`** vs **Virtual NIC Mode `0x0044`**), cross-platform architecture blueprint, and clean-room firewall rules.
+* [USB & SCSI Pass-Through Transport](specs/01-usb-and-scsi-transport-spec.md)  
+  Dual-backend transport abstraction (direct `libusb` Bulk-Only Transport `USBC`/`USBS` with tag `0x08210827` and OS SCSI Pass-Through `SG_IO`/`SPTI`), all 10 SCSI/vendor CDBs (`0x00`, `0x28`, `0xF0`, `0xD8 0x00`, `0xD8 0x01`, `0xD9 0x28`, `0xD9 0x2A`, `0xDA 0x28`, `0xDA 0x2A`, `0xDB 0x28`), 24-bit sense code mapping, 8-state poll loop (`action_code 0..7`), and verified physical hardware captures.
+* [Host-to-Host Wire Protocol](specs/02-host-to-host-wire-protocol-spec.md)  
+  64 KB (`0x10000`) bulk block framing (20-byte little-endian header + `0xFFEC` payload), multi-block packet splitter/reassembler, all 25 Client Command opcodes (`0x01..0x17`, `0x32..0x39`), all 12 Server Reply opcodes (`0xA1..0xAC`), 552-byte (`0x228`) directory entry layout, and `<OTIMSG>` / `<ExtraXmlCommand>` XML schemas.
+* [Application Functional & UI Specification](specs/03-application-functional-and-ui-spec.md)  
+  Dual-pane Local/Remote file manager UI, 8 menus, 7 dialogs, 11 language locales, folder synchronization engine (`My Briefcase`), conflict resolution workflows, and legacy plugin boundaries (`ECN001.DLL` Outlook sync and `ProdLic.dll` flash license check).
+* [Virtual NIC & Mode-Switch Protocol](specs/04-virtual-nic-and-mode-switch-spec.md)  
+  Mode switching (`0x007F` $\leftrightarrow$ `0x0044`), `35,328`-byte (`0x8A00`) Ethernet batch buffer framing (21-byte header + `[frame_len_u16_le][eth_frame]` stream + `0xFFFF` terminator), synthetic MAC assignment (`00:10:60:21:08:01`), and cross-platform TAP/TUN daemon design.
 
 ## Non-Destructive Hardware Probe (`tools/probe_oti2108_hw.py`)
 

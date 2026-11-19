@@ -6,13 +6,16 @@ This specification suite defines the complete hardware transport, host-to-host w
 
 ### 1.1 Suite Structure
 
-| Document | Title | Scope |
-| :--- | :--- | :--- |
-| [00-overview-and-architecture.md](00-overview-and-architecture.md) | Overview & System Architecture | Hardware overview, legacy multi-layer binary inventory, legacy plugin/DRM boundary, and target cross-platform architecture. |
-| [01-usb-and-scsi-transport-spec.md](01-usb-and-scsi-transport-spec.md) | USB & SCSI Pass-Through Transport Specification | USB descriptors (`0ea0:2108`), all 10 SCSI/vendor CDBs, sense code table, initialization sequence, link poll state machine, virtual disk backing, and dual transport (`libusb` BOT vs. OS SCSI pass-through). |
-| [02-host-to-host-wire-protocol-spec.md](02-host-to-host-wire-protocol-spec.md) | Host-to-Host Wire Protocol Specification | 20-byte bulk block header, 64 KB packet splitter/reassembler, host query format (`0x01`), all Client Command opcodes (`0x01..0x39`), all Server Reply opcodes (`0xA1..0xAC`), 552-byte directory entry struct, and dynamic plugin RPC `<OTIMSG>` / `<ExtraXmlCommand>` XML protocols. |
-| [03-application-functional-and-ui-spec.md](03-application-functional-and-ui-spec.md) | Application Functional & UI Specification | Dual-pane file manager UI, status indicators, menu/dialog specifications, file transfer workflows (overwrite pre-check, recursive batch sync, progress/cancel), and 11-locale string mappings. |
-| [04-virtual-nic-and-mode-switch-spec.md](04-virtual-nic-and-mode-switch-spec.md) | Virtual NIC & Mode-Switch Specification | Transfer Line (`0x007F`) $\leftrightarrow$ Virtual NIC (`0x0044`) handshake, 34.5 KB (`0x8A00`) bulk transfer framing with `0xFF` payload marker, `[frame_len:u16_le][ethernet_frame]` batching, MAC address generation, and cross-platform user-space `TUN/TAP` architecture. |
+* [Overview & System Architecture](00-overview-and-architecture.md)  
+  Hardware overview, legacy multi-layer binary inventory, legacy plugin/DRM boundary, and target cross-platform architecture.
+* [USB & SCSI Pass-Through Transport Specification](01-usb-and-scsi-transport-spec.md)  
+  USB descriptors (`0ea0:2108`), all 10 SCSI/vendor CDBs, sense code table, initialization sequence, link poll state machine, virtual disk backing, and dual transport (`libusb` BOT vs. OS SCSI pass-through).
+* [Host-to-Host Wire Protocol Specification](02-host-to-host-wire-protocol-spec.md)  
+  20-byte bulk block header, 64 KB packet splitter/reassembler, host query format (`0x01`), all Client Command opcodes (`0x01..0x39`), all Server Reply opcodes (`0xA1..0xAC`), 552-byte directory entry struct, and dynamic plugin RPC `<OTIMSG>` / `<ExtraXmlCommand>` XML protocols.
+* [Application Functional & UI Specification](03-application-functional-and-ui-spec.md)  
+  Dual-pane file manager UI, status indicators, menu/dialog specifications, file transfer workflows (overwrite pre-check, recursive batch sync, progress/cancel), and 11-locale string mappings.
+* [Virtual NIC & Mode-Switch Specification](04-virtual-nic-and-mode-switch-spec.md)  
+  Transfer Line (`0x007F`) $\leftrightarrow$ Virtual NIC (`0x0044`) handshake, 34.5 KB (`0x8A00`) bulk transfer framing with `0xFF` payload marker, `[frame_len:u16_le][ethernet_frame]` batching, MAC address generation, and cross-platform user-space `TUN/TAP` architecture.
 
 ---
 
