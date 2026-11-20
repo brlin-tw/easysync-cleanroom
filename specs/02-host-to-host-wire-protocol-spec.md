@@ -94,10 +94,10 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | **`0x0F`** | **Cancel Single File Transfer (Keep Partial)** | `0x0040EB06` | `0x0043E3B4` | — | `[0x0F][item_id:u32_le][win32_error:u32_le]` (9 bytes in Windows mode; appends `"ErrStr"` + `err_str_len:u32_le` + `err_str:wchar_t[]` in `0x10`/`0x20` mode; closes handle without deleting destination file) |
 | **`0x10`** | **Batch File Download Request (16-bit Count)** | `0x0040DD56` | `0x0043E781` | `0xA3`, `0xA6`, `0xA7`, `0xAB` | `[0x10][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (replies with `0xA3` chunks, `0xA6` zero-len, `0xAB` errors, ended by `0xA7`) |
 | **`0x11`** | **Abort Batch File Transfer** | `0x0040E19F` | `0x0043E45C` | — | `[0x11][req_id:u32_le][win32_error:u32_le]` (9 bytes in Windows mode; `ErrStr` extension in `0x10`/`0x20` mode; cancels batch job without reply) |
-| **`0x12`** | **Batch Prepare / Clear Read-Only Attributes** | `0x0040E628` | `0x0043F981` | `0xA1` | `[0x12][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` |
+| **`0x12`** | **Batch Prepare / Clear Read-Only Attributes** | `0x0040E628` | `0x0043F981` | — | `[0x12][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (fire-and-forget; no reply; clears `0x07` attributes and registers items in `0x7adce0`) |
 | **`0x13`** | **Batch Upload Pre-Check (Space & Conflicts)** | `0x0040E468` | `0x0043F269` | `0xA8` | `[0x13][req_id:u32_le][total_size:u64_le][flags:u16_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (replies `0xA8`) |
 | **`0x14`** | **Cancel Active Packet Splitter Job** | `0x0040E60A` | `0x0043FCF8` | — | `[0x14][job_id:u32_le]` (5 bytes; cancels active job with flag `1` without reply) |
-| **`0x15`** | **Create Batch Zero-Length Files** | `0x0040E7B3` | `0x0043FB55` | `0xA1` | `[0x15][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` |
+| **`0x15`** | **Create Batch Zero-Length Files** | `0x0040E7B3` | `0x0043FB55` | None (on success); `0xA9` (on error) | `[0x15][req_id:u32_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (no reply on success; sends `0xA9` via `0x004417A0` on error) |
 | **`0x16`** | **Extended Batch Upload Pre-Check** | `0x0043F5F3` | `0x0043F5F3` | `0xAA` | `[0x16][req_id:u32_le][total_size:u64_le][flags:u16_le][item_count:u16_le][records: (item_id:u32_le, path_len:u16_le, path:wchar_t)...]` (Section 4.2.7) |
 | **`0x17`** | **UI Notification Command** | `0x0040F6B1` | `0x0043D2E8` | — | `[0x17][code:int8]` (2 bytes; posts Win32 message `0x0FC0` with `wParam = (int8)code`, `lParam = 0`) |
 | **`0x32`** | **Keep-Alive / No-Op Ack 0x32** | — | `0x0043D2C1` | — | `[0x32]` (1 byte; immediate jump to exit `0x0043D42A`) |
@@ -357,6 +357,21 @@ Offset  Size        Type          Field
   > Opcode `0x08` requires the 2-byte `path_len` field and UTF-16LE encoding.
   > If a client sends an unpadded ASCII path or omits `path_len` (e.g. sending 18 bytes: `[0x08][req_id:4B]["C:\REUSE.toml":13B]`), the server interprets the first two ASCII characters (`'C:'` = `0x3A43` = 14,915 bytes) as `path_len`.
   > `memcpy` immediately overflows the server's 1,024-byte stack buffer and corrupts the SEH frame, causing an unhandled Access Violation (`0xC0000005`) that crashes `EasySuite.exe`. The bridge controller drops to `action_code = 1` (peer disconnected), all subsequent writes fail with timeout errors, and the client hangs waiting for a reply.
+
+#### 4.2.9 `0x12` — Batch Prepare / Clear Read-Only Attributes (`0x0040E628` / `0x0043F981`)
+Clears read-only/hidden/system attributes on existing destination items and registers batch upload items in `0x7adce0` prior to streaming `0x0C` chunks:
+
+```text
+Offset  Size        Type          Field
++0x00   1           uint8         opcode = 0x12
++0x01   4           uint32_le     req_id (Client transaction sequence ID)
++0x05   2           uint16_le     item_count (K)
++0x07   ...         records[K]    Back-to-back item records: (item_id:u32_le, path_len:u16_le, path:wchar_t)
+```
+
+- **Fire-and-Forget Semantics (No Reply):**
+  1. **Server Behavior (`0x0043F981`):** For each of the `item_count` records, converts `path` to Windows separators, queries `GetFileAttributesExW` / `GetFileAttributesA`, and if `(attrs != -1)` and `(attrs & 0x07) != 0` (`READONLY | HIDDEN | SYSTEM`), clears those three bits (`and al, 0xf8`) via `SetFileAttributesW` / `SetFileAttributesA`. It then calls `0x0044367D` on `0x7adce0` to register the item and returns immediately **without sending `0xA1` or any other reply**.
+  2. **Client Behavior (`0x004395F6`):** `EasySuite.exe` transmits `0x12` via `0x0040E628` and immediately proceeds to `0x00445474` to stream `0x0C` file data chunks without awaiting a reply. Clean-room clients **must not** block waiting for `0xA1` after sending `0x12`.
 
 ---
 
