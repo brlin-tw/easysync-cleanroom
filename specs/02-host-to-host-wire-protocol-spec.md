@@ -329,9 +329,10 @@ Record Offset  Size        Type          Field
         + Non-existence (`GetLastError() == ERROR_FILE_NOT_FOUND (2)`) is ignored.
         + Any other Win32 error (e.g., `ERROR_PATH_NOT_FOUND (3)`) is recorded as a `(win32_error:u32_le, item_id:u32_le)` pair in `error_pairs`.
   4. Generates Server Reply **`0xAA`** (**Extended Batch Pre-Check Reply** at `0x0044196E`) containing the volume flags, colliding `item_id`s, and `(win32_error, item_id)` error pairs (subject to the 4-byte wire truncation bug documented in Section 5.3).
-- **Critical Opcode 0x16 Crash Pitfall:**
+- **Critical Opcode 0x16 Crash Pitfalls:**
   > [!CAUTION]
-  > Opcode `0x16` is **strictly a binary batch pre-check command**; it is **NOT** an XML channel. If a client transmits `<OTIMSG>` ASCII XML preceded by opcode `0x16`, `EasySuite.exe` interprets the ASCII bytes at `+0x0F` (`"SG"` / `"<O"`) as a large 16-bit `item_count`, reads out-of-bounds past the end of the packet, and crashes.
+  > 1. **Heap Buffer Overflow in `0xAA` Reply Construction (`0x0044196E`):** Whenever `EasySuite.exe` handles `0x16`, `0x0044196E` allocates `13 + 4 * conflict_count + 8 * error_count + 1` bytes and writes `17 + 4 * conflict_count + 8 * error_count` bytes, corrupting its own Windows heap before the reply is sent (Section 5.3). Clean-room clients **must use `0x13` (`0xA8` reply)** instead of `0x16` to avoid crashing the remote `EasySuite.exe` peer.
+  > 2. **Not an XML Channel:** Opcode `0x16` is **strictly a binary batch pre-check command**; it is **NOT** an XML channel. If a client transmits `<OTIMSG>` ASCII XML preceded by opcode `0x16`, `EasySuite.exe` interprets the ASCII bytes at `+0x0F` (`"SG"` / `"<O"`) as a large 16-bit `item_count`, reads out-of-bounds past the end of the packet, and crashes.
 
 #### 4.2.8 `0x08` — Delete Remote File (`0x0040EC14` / `0x0043DBD1`)
 Deletes a single file on the remote peer:
@@ -440,7 +441,9 @@ Both `0xA8` (sent by `0x004418C9`, handled at `0x0040CC41` via `0x0040B9FA`) and
   ```
   Although `0x004419AA..0x00441A28` writes `17 + 4 * conflict_count + 8 * error_count` bytes (overflowing the `size + 1` heap allocation by 3 bytes), `0x00441A2A` passes the `13 + ...` length to `0x0043FD2D`, **truncating the final 4 bytes on the wire**:
   - For example, in `openeasysync-09.log` line 33 (`conflict_count = 0`, `error_count = 1`), `EasySuite.exe` sends `21` bytes (`aa 00 01 01 00 03000000 00000000 01000000 03000000`) instead of `25`, containing `win32_error = 3` (`ERROR_PATH_NOT_FOUND`) with its trailing `item_id` truncated.
-  - **Clean-room client guidance:** Do not silently discard a trailing 4-byte `win32_error` when `len(payload)` is `13 + 4 * conflict_count + 8 * error_count` (or `offset + 8 > len(payload)` with 4 bytes remaining); parse the final `win32_error:u32_le` with `item_id = None` when truncated, while also supporting full `17 + 4 * conflict_count + 8 * error_count` packets.
+  - **Clean-room client guidance:**
+    + **Preventing the `EasySuite.exe` crash (use `0x13` $\rightarrow$ `0xA8` instead of `0x16`):** Because `0x0044196E` allocates `13 + 4 * conflict_count + 8 * error_count + 1` bytes and writes `17 + 4 * conflict_count + 8 * error_count` bytes while constructing the `0xAA` reply *before* the packet is ever sent over USB, client-side `0xAA` parsing cannot prevent the Windows heap corruption in `EasySuite.exe`. Clean-room clients must avoid triggering `0x0044196E` by sending **`0x13`** (`0xA8` reply) instead of `0x16` (`0xA8` still provides `peer_error`, `space_ok`, `ntfs_ok`, `is_readonly`, and `conflict_item_ids` without the heap overflow bug).
+    + **Safe `0xAA` decoding (for any received `0xAA` packet):** Retain a truncation-tolerant `0xAA` parser so any `0xAA` packet received from `EasySuite.exe` is decoded safely without silently discarding a trailing 4-byte `win32_error`: when `len(payload)` is `13 + 4 * conflict_count + 8 * error_count` (or `offset + 8 > len(payload)` with 4 bytes remaining), parse the final `win32_error:u32_le` with `item_id = None`, while also supporting full `17 + 4 * conflict_count + 8 * error_count` packets.
 
 ---
 
