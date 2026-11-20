@@ -324,8 +324,11 @@ Record Offset  Size        Type          Field
 - **Server Behavior (`0x0043F5F3`):**
   1. Dispatched from Client Command Dispatcher `0x0043D181` via `0x0043D309..0x0043D310`.
   2. Reads `req_id`, `total_size`, `flags`, and iterates through all `item_count` records.
-  3. Checks volume free space and tests whether each target file already exists on the peer.
-  4. Generates Server Reply **`0xAA`** (**Extended Batch Pre-Check Reply** at `0x0044196E`) containing colliding `item_id`s and `(item_id, extra_val)` pairs.
+  3. Checks volume preconditions via `0x00402884` (`space_ok`, `ntfs_ok`, `is_readonly`) and tests each `dest_path` with `GetFileAttributesExA`/`GetFileAttributesExW`:
+        + Existing files (`GetFileAttributesEx` succeeds) are added to `conflict_item_ids`.
+        + Non-existence (`GetLastError() == ERROR_FILE_NOT_FOUND (2)`) is ignored.
+        + Any other Win32 error (e.g., `ERROR_PATH_NOT_FOUND (3)`) is recorded as a `(win32_error:u32_le, item_id:u32_le)` pair in `error_pairs`.
+  4. Generates Server Reply **`0xAA`** (**Extended Batch Pre-Check Reply** at `0x0044196E`) containing the volume flags, colliding `item_id`s, and `(win32_error, item_id)` error pairs (subject to the 4-byte wire truncation bug documented in Section 5.3).
 - **Critical Opcode 0x16 Crash Pitfall:**
   > [!CAUTION]
   > Opcode `0x16` is **strictly a binary batch pre-check command**; it is **NOT** an XML channel. If a client transmits `<OTIMSG>` ASCII XML preceded by opcode `0x16`, `EasySuite.exe` interprets the ASCII bytes at `+0x0F` (`"SG"` / `"<O"`) as a large 16-bit `item_count`, reads out-of-bounds past the end of the packet, and crashes.
@@ -371,9 +374,9 @@ Server Replies are sent by `0x0043FD2D..0x00441DA8` in response to Client Comman
 | **`0xA5`** | **Single-File Upload Error Notification** | `0x0043FE85` | `0x0040D7D2` | `[0xA5][item_id:u32_le][win32_error:u32_le]` (9 bytes total; emitted only when a file chunk write fails during `0x0C`; Section 4.2.6) |
 | **`0xA6`** | **Batch Zero-Length Files / Empty Dirs** | `0x00441602` | `0x0040CFEF` | `[0xA6][req_id:u32_le][item_count:u16_le][item_ids:u32_le[item_count]]` (`7 + 4 * item_count` bytes; batch items with 0 data bytes) |
 | **`0xA7`** | **Batch Download Complete ACK** | `0x0044175A` | `0x0040D210` | `[0xA7][req_id:u32_le][status:u16_le]` (7 bytes total; signals end of `0x10`/`0x35`/`0x36` batch download) |
-| **`0xA8`** | **Batch Upload Pre-Check Reply** | `0x004418C9` | `0x0040D290` | `[0xA8][flag0:u8][insufficient_space:u8][has_conflicts:u8][flag3:u8][req_id:u32_le][conflict_count:u32_le][conflict_item_ids:u32_le[conflict_count]]` (`13 + 4 * conflict_count` bytes; response to `0x13`) |
+| **`0xA8`** | **Batch Upload Pre-Check Reply** | `0x004418C9` | `0x0040CC41` | `[0xA8][peer_error:u8][space_ok:u8][ntfs_ok:u8][is_readonly:u8][req_id:u32_le][conflict_count:u32_le][conflict_item_ids:u32_le[conflict_count]]` (`13 + 4 * conflict_count` bytes; response to `0x13`; Section 5.3) |
 | **`0xA9`** | **Batch Upload Error Notification** | `0x004417A0` | `0x0040D420` | `[0xA9][item_id:u32_le][win32_error:u32_le][status:u32_le]` (13 bytes in Windows mode; appends `"ErrStr"` + `err_str_len:u32_le` + `err_str:wchar_t[]` in `0x10` mode) |
-| **`0xAA`** | **Extended Batch Pre-Check Reply** | `0x0044196E` | `0x0040D650` | `[0xAA][flag0:u8][flag1:u8][flag2:u8][flag3:u8][req_id:u32_le][conflict_count:u32_le][extra_count:u32_le][conflict_item_ids:u32_le[conflict_count]][extra_pairs: (item_id:u32_le, val:u32_le)[extra_count]]` (`17 + 4 * conflict_count + 8 * extra_count` bytes; response to `0x16`) |
+| **`0xAA`** | **Extended Batch Pre-Check Reply** | `0x0044196E` | `0x0040CD5F` | `[0xAA][peer_error:u8][space_ok:u8][ntfs_ok:u8][is_readonly:u8][req_id:u32_le][conflict_count:u32_le][error_count:u32_le][conflict_item_ids:u32_le[conflict_count]][error_pairs: (win32_error:u32_le, item_id:u32_le)[error_count]]` (intended `17 + 4 * conflict_count + 8 * error_count` bytes; **`EasySuite.exe` transmits `13 + 4 * conflict_count + 8 * error_count` bytes due to a 4-byte length-calculation bug**; response to `0x16`; Section 5.3) |
 | **`0xAB`** | **Batch Unreadable Files Notification** | `0x004416AE` | `0x0040D840` | `[0xAB][req_id:u32_le][failed_count:u16_le][item_ids:u32_le[failed_count]]` (`7 + 4 * failed_count` bytes; items that failed `FindFirstFile`/`CreateFile` during batch download) |
 | **`0xAC`** | **Formatted Win32 Error Strings Reply** | `0x00441CC4` | `0x0040BA16` | `[0xAC][count:u32_le][records: (err_code:u32_le, msg_len:u32_le, formatted_msg:wchar_t)...]` (response to `0x38` via `FormatMessage`; `formatted_msg` is UTF-16LE) |
 
@@ -415,6 +418,29 @@ Sent in response to Client Command `0x01` (**Query Peer Root / Drives**). The cl
 > [!IMPORTANT]
 > **Why Omitting Trailing Strings in `0x20` Mode Renders an Unnamed Hard Disk and Stalls:**
 > If a peer sends `drive_type = 0x22` (`0x20 | 2`) without the two trailing UTF-16LE strings, `0x0040F239` reads past the 5-byte payload into zero-filled buffer memory (`name_byte_len = 0`, `path_byte_len = 0`), setting `display_name = L""` and `root_path = L""`. `0x00435C77` still maps `drive_type & 0x0F = 2` to `DRIVE_FIXED` (`Type = Hard Disk`), but overwrites the item's Name with `""`. Because `0x00435EA9` aborts without sending `0x04` whenever `display_name` is empty, `EasySuite.exe` displays `My Computer` $\rightarrow$ unnamed `Hard Disk` and never issues `0x04`.
+
+### 5.3 `0xA8` / `0xAA` — Batch Upload Pre-Check Reply Flags & Wire Truncation Quirk
+
+Both `0xA8` (sent by `0x004418C9`, handled at `0x0040CC41` via `0x0040B9FA`) and `0xAA` (sent by `0x0044196E`, handled at `0x0040CD5F` via `0x0040BA08`) populate their four status bytes (`+0x01..+0x04`) identically using the volume precondition helper `0x00402884`:
+
+| Offset | Field | Polarity | Producer (`0x00402884` / `0x004418C9` / `0x0044196E`) | Client Consumer (`0x0040CC41` / `0x0040CD5F`) |
+| :---: | :--- | :--- | :--- | :--- |
+| `+0x01` | `peer_error` (`flag0`) | Active-high error | `1` if `[0x004800C4] != 0`, else `0`. | If `1`, aborts transfer via `0x00402139(5)`. |
+| `+0x02` | `space_ok` (`flag1`) | **Active-low error** | Calls `GetDiskFreeSpaceExA("%c:\\")`. `1` if call succeeds and `total_size < free_bytes_avail`; `0` otherwise. | If **`0`**, sets `[0x0045F530] = [0x0045F534] = 0x70` (`ERROR_DISK_FULL`) and calls `0x00402139(1)`. |
+| `+0x03` | `ntfs_ok` (`flag2`) | **Active-low error** | Initialized to `1`. If `0x13`/`0x16` `flags != 0`, calls `GetVolumeInformationA("%c:\\")` and sets `0` if filesystem name `!= "NTFS"`. | If **`0`**, sets `[0x0045F534] = 0`, `[0x0045F530] = 0x13` (`ERROR_WRITE_PROTECT`) and calls `0x00402139(1)`. |
+| `+0x04` | `is_readonly` (`flag3`) | Active-high error | Calls `GetFileAttributesA("%c:\\")` and stores `attrs & 1` (`FILE_ATTRIBUTE_READONLY`; also `1` if `INVALID_FILE_ATTRIBUTES`). | If `1`, sets `[0x0045F530] = [0x0045F534] = 0x13` (`ERROR_WRITE_PROTECT`) and calls `0x00402139(1)`. |
+
+#### `0xAA` `error_pairs` and `EasySuite.exe` 4-Byte Wire Truncation Bug (`0x00441987`)
+
+- **Per-Item Error Pairs:** In `0x0043F5F3` (`0x0043F801..0x0043F830`), when `GetFileAttributesExA`/`GetFileAttributesExW` fails with `err = GetLastError()` and `err != ERROR_FILE_NOT_FOUND (2)`, the server appends an 8-byte `(win32_error:u32_le, item_id:u32_le)` entry to `error_pairs` (`error_count` at `+0x0D`).
+- **4-Byte Truncation Bug in `0x0044196E`:** At `0x00441984..0x0044198E`, `EasySuite.exe` computes the allocation and transmit byte length as:
+  ```text
+  lea eax, [ecx + eax*2]        ; ecx = conflict_count, eax = error_count
+  lea eax, [eax*4 + 0xd]        ; 13 + 4 * conflict_count + 8 * error_count  (BUG: should be + 0x11 = 17)
+  ```
+  Although `0x004419AA..0x00441A28` writes `17 + 4 * conflict_count + 8 * error_count` bytes (overflowing the `size + 1` heap allocation by 3 bytes), `0x00441A2A` passes the `13 + ...` length to `0x0043FD2D`, **truncating the final 4 bytes on the wire**:
+  - For example, in `openeasysync-09.log` line 33 (`conflict_count = 0`, `error_count = 1`), `EasySuite.exe` sends `21` bytes (`aa 00 01 01 00 03000000 00000000 01000000 03000000`) instead of `25`, containing `win32_error = 3` (`ERROR_PATH_NOT_FOUND`) with its trailing `item_id` truncated.
+  - **Clean-room client guidance:** Do not silently discard a trailing 4-byte `win32_error` when `len(payload)` is `13 + 4 * conflict_count + 8 * error_count` (or `offset + 8 > len(payload)` with 4 bytes remaining); parse the final `win32_error:u32_le` with `item_id = None` when truncated, while also supporting full `17 + 4 * conflict_count + 8 * error_count` packets.
 
 ---
 
