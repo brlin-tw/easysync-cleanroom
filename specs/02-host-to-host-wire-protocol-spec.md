@@ -82,9 +82,9 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | **`0x03`** | **Refresh Current Directory** | — | `0x0043D64D` | `0xA1` (`status=0`), then `0xA2`; or `0xA1` (`status=3`) | `[0x03]` (1 byte; re-lists active directory on peer, returns 24B 0xA1 `status=0` followed by 0xA2 listing, or `status=3` on error) |
 | **`0x04`** | **Change / List Remote Directory** | `0x0040DB30` | `0x0043D741` | `0xA1` (`status=0`), then `0xA2`; or `0xA1` (`status=1`) | `[0x04][path_len:u16_le][dir_path:wchar_t]` (emits 24B 0xA1 status=0 followed by 552B `0xA2` listing, or 24B 0xA1 status=1 on error; Section 4.2.3) |
 | **`0x05`** | **Select Remote Drive (Legacy/No-op)** | `0x0040DC28` | `0x0043D394` | — | `[0x05]` (1 byte; legacy/no-op, jumps to exit `0x0043D42A`) |
-| **`0x06`** | **Remove Remote Directory** | `0x0040EE3A` | `0x0043D90F` | `0xA1` (`status=0` or `1`) | `[0x06][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `RemoveDirectoryW`, replies 24B `0xA1`) |
+| **`0x06`** | **Remove Remote Directory** | `0x0040EE3A` | `0x0043D90F` | `0xA1` (`status=0` or `1`) | `[0x06][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `RemoveDirectoryW`/`A`, non-recursive / empty directories only, replies 24B `0xA1`) |
 | **`0x07`** | **Create Remote Directory** | `0x0040EF0A` | `0x0043DA61` | `0xA1` (`status=0` or `1`) | `[0x07][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `CreateDirectoryW`, replies 24B `0xA1`) |
-| **`0x08`** | **Delete Remote File** | `0x0040EC14` | `0x0043DBD1` | `0xA1` (`status=0` or `1`) | `[0x08][req_id:u32_le][path_len:u16_le][file_path:wchar_t]` (calls `DeleteFileW`, replies 24B `0xA1`) |
+| **`0x08`** | **Delete Remote File (or Empty Directory)** | `0x0040EC14` | `0x0043DBD1` | `0xA1` (`status=0` or `1`) | `[0x08][req_id:u32_le][path_len:u16_le][file_path:wchar_t]` (calls `0x0044095D`: clears `0x27` attrs, dispatches to `RemoveDirectoryW`/`A` if `FILE_ATTRIBUTE_DIRECTORY` else `DeleteFileW`/`A`; replies 24B `0xA1`) |
 | **`0x09`** | **Rename Remote File or Directory** | `0x0040ECE4` | `0x0043DD10` | `0xA1` (`status=0` or `1`) | `[0x09][req_id:u32_le][old_len:u16_le][new_len:u16_le][old_path:wchar_t][new_path:wchar_t]` (calls `MoveFileW`, replies 24B `0xA1`) |
 | **`0x0A`** | **Single File Upload Request** | `0x0040E2A7` | `0x0043DF17` | `0xA1` (`status=0..7`) | `[0x0A][flags:u8][req_id:u32_le][file_size:u64_le][dest_path_len:u16_le][dest_path:wchar_t]` (16B header + UTF-16LE path; Section 4.2.4) |
 | **`0x0B`** | **Single File Download Request** | `0x0040DBF4` | `0x0043E4DA` | `0xA1` (`status=9` inline, `7` empty, `1` error); or `0xA1` (`status=0`) then `0xA3` | `[0x0B][req_id:u32_le][src_len:u16_le][src_path:wchar_t][dest_len:u16_le][dest_path:wchar_t]` (9B header/lengths + UTF-16LE paths; Section 4.2.5) |
@@ -334,8 +334,8 @@ Record Offset  Size        Type          Field
   > 1. **Heap Buffer Overflow in `0xAA` Reply Construction (`0x0044196E`):** Whenever `EasySuite.exe` handles `0x16`, `0x0044196E` allocates `13 + 4 * conflict_count + 8 * error_count + 1` bytes and writes `17 + 4 * conflict_count + 8 * error_count` bytes, corrupting its own Windows heap before the reply is sent (Section 5.3). Clean-room clients **must use `0x13` (`0xA8` reply)** instead of `0x16` to avoid crashing the remote `EasySuite.exe` peer.
   > 2. **Not an XML Channel:** Opcode `0x16` is **strictly a binary batch pre-check command**; it is **NOT** an XML channel. If a client transmits `<OTIMSG>` ASCII XML preceded by opcode `0x16`, `EasySuite.exe` interprets the ASCII bytes at `+0x0F` (`"SG"` / `"<O"`) as a large 16-bit `item_count`, reads out-of-bounds past the end of the packet, and crashes.
 
-#### 4.2.8 `0x08` — Delete Remote File (`0x0040EC14` / `0x0043DBD1`)
-Deletes a single file on the remote peer:
+#### 4.2.8 `0x08` — Delete Remote File / Empty Directory (`0x0040EC14` / `0x0043DBD1`) & `0x06` Non-Recursive Behavior (`0x0043D90F`)
+Deletes a single file (or empty directory) on the remote peer:
 
 ```text
 Offset  Size        Type          Field
@@ -345,13 +345,20 @@ Offset  Size        Type          Field
 +0x07   P           wchar_t       file_path (Full remote file path, UTF-16LE encoded)
 ```
 
-- **Server Behavior (`0x0043DBD1`):**
+- **Server Behavior (`0x0043DBD1` -> `0x0044095D`):**
   1. Unpacks `req_id` (`[ebx]`) and `path_len` (`[ebx + 4]`).
   2. Copies `path_len` bytes into a 1,024-byte stack buffer via `memcpy`.
-  3. Invokes `DeleteFileW` on the target path.
+  3. Invokes helper `0x0044095D` on the target path:
+     - Queries `GetFileAttributesExW` (or `GetFileAttributesExA` in ANSI mode). If that fails, records `GetLastError()`.
+     - If any of `FILE_ATTRIBUTE_READONLY | HIDDEN | SYSTEM | ARCHIVE` (`0x27`) are set, clears those bits via `SetFileAttributesW` / `SetFileAttributesA`.
+     - Checks `FILE_ATTRIBUTE_DIRECTORY` (`0x10`):
+       - **If set (target is a directory):** invokes **`RemoveDirectoryW` / `RemoveDirectoryA`** (non-recursive). On a non-empty directory, `EasySuite.exe` therefore fails with **`ERROR_DIR_NOT_EMPTY` (`145`)** (as observed in `usb-capture-06.pcapng`), rather than `DeleteFileW`'s `ERROR_ACCESS_DENIED` (`5`).
+       - **Otherwise (target is a file):** invokes **`DeleteFileW` / `DeleteFileA`**.
   4. Returns standard 24-byte Server Reply **`0xA1`** (`req_opcode = 0x08`, `req_id` echoed):
-        + `status = 0`, `win32_error = 0`: File successfully deleted.
-        + `status = 1`, `win32_error = GetLastError()`: Deletion failed (e.g. `ERROR_FILE_NOT_FOUND` = 2, `ERROR_ACCESS_DENIED` = 5).
+        + `status = 0`, `win32_error = 0`: Target successfully deleted.
+        + `status = 1`, `win32_error = GetLastError()`: Deletion failed (e.g. `ERROR_FILE_NOT_FOUND` = 2, `ERROR_ACCESS_DENIED` = 5, `ERROR_DIR_NOT_EMPTY` = 145).
+- **Non-Recursive Directory Removal (`0x06` at `0x0043D90F`):**
+  - Opcode `0x06` (`[0x06][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]`) directly invokes `RemoveDirectoryW` / `RemoveDirectoryA` (without `0x0044095D`'s attribute-clearing or file fallback). Like `0x08`'s directory branch, `0x06` is **strictly non-recursive**: it only deletes empty directories and returns `0xA1` with `status = 1, win32_error = 145` (`ERROR_DIR_NOT_EMPTY`) when the directory is non-empty. Clients requiring recursive deletion must enumerate and delete children before issuing `0x06` (or `0x08`).
 - **Critical Opcode 0x08 Crash Pitfall:**
   > [!CAUTION]
   > Opcode `0x08` requires the 2-byte `path_len` field and UTF-16LE encoding.
