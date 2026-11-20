@@ -101,3 +101,6 @@
 
 # Don't track unpacked product files
 /easysync-cleanroom-*/
+
+# Don't track patch files
+*.patch
