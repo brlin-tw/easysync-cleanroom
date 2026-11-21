@@ -65,17 +65,20 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 | | `Switch EasySync to &Virtual Network` | `32789` | Open `Network Option` Dialog (`188`) and initiate Virtual NIC mode switch (`0x39`) |
 | **`&Help`** | `&About EasySync...` | `57664` | Open `About EasySync` Dialog (`174`) |
 
-### 2.2 Context & Auxiliary Menus (`129`, `136`, `156`, `157`, `483`)
-- **Menu `129` (Right-Click Context Menu on File/Folder List):**
-    + `&Copy` (`57634`), `&Paste` (`57637`), `---`, `&Open` (`32779`), `&Delete` (`32776`), `&Rename` (`32778`), `---`, `&New Folder` (`32777`).
-- **Menu `136` (Toolbar View Dropdown):**
-    + `Lar&ge Icons` (`32780`), `S&mall Icons` (`32781`), `&List` (`32782`), `&Details` (`32783`).
-- **Menu `156` (System Tray Icon Menu):**
-    + `&Open EasySync` (`32785`), `&Close EasySync` (`32786`).
-- **Menu `157` (Optional Add-On Function Menu — `ECN001.DLL`):**
-    + `Start &OTi AP` (`32790`), `Start &Mail AP` (`32791`), `Start &PIM AP` (`32792`), `Start &Security AP` (`32793`), `Start S&ync AP` (`32794`).
-- **Menu `483` (Toolbar Virtual Network Dropdown):**
-    + `Switch EasySync to &Virtual Network` (`32789`).
+### 2.2 Context & Auxiliary Menus (`129`, `136`, `156`, `157`, `483`, `484`, `485`)
+- **Menu `156` (Local Host File List Right-Click Context Menu — `File Menu`):**
+    + `Cut` (`32778`), `Copy` (`32774`), `Paste` (`32775`), `Delete` (`32776`), `---`, `Open` (`32793`), `---`, `Rename` (`32782`), `Make Directory` (`32783`).
+- **Menu `484` (Remote Host File List Right-Click Context Menu — `File Menu`):**
+    + `Copy` (`32774`), `Paste` (`32775`), `Delete` (`32776`), `---`, `Rename` (`32782`), `Make Directory` (`32783`).
+- **Menu `483` / `157` (Folder Tree Right-Click Context Menus — `Folder Menu`):**
+    + Local (`483`): `Cut` (`32778`), `Copy` (`32774`), `Paste` (`32775`), `Delete` (`32776`), `---`, `Refresh` (`32777`).
+    + Remote (`157`): `Copy` (`32774`), `Paste` (`32775`), `Delete` (`32776`), `---`, `Refresh` (`32777`).
+- **Menu `485` (`Paste Menu`):**
+    + `Paste` (`32775`).
+- **Menu `129` (Full Application Menu Bar):**
+    + `&System` (`Set&up` `32790`, `---`, `Network Go` `32809`, `---`, `E&xit` `57665`), `&Edit` (`Cu&t\tCtrl+X` `32778`, `&Copy\tCtrl+C` `32774`, `&Paste\tCtrl+V` `32775`, `&Delete\tCtrl+D` `32776`), `&View` (`&Toolbar` `59392`, `&Status Bar` `59393`, `---`, `Lar&ge Icons` `32801`, `S&mall Icons` `32802`, `&List` `32803`, `&Details` `32804`), `&Window` (`&Cascade` `57650`, `&Tile` `57651`, `S&plit` `57653`), `&Help` (`&About EasySync...` `57664`).
+- **Menu `136` (`Lamp Info` & Icon Arrangement):**
+    + `Lamp Info`: `USB 1.1(R)` (`32784`), `USB 2.0(R)` (`32785`), `USB 1.1 (L)` (`32786`), `USB 2.0 (L)` (`32787`), `Read Only` (`32788`), `Data Transfer` (`32791`); `&Arrange Icons` (`57649`).
 
 ---
 
