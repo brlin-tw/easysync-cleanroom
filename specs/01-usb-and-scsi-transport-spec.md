@@ -101,8 +101,8 @@ All OTi-2108 vendor-specific CDBs are **16 bytes long** (`bCBWCBLength = 16`) an
 | 5 | `0xD8 0x01` | **Write Bridge Command / Mode** | `OUT`/`NONE` | `0` B | `4` s | `0x00432102` | `0x00011AC2` |
 | 6 | `0xD9 0x28` | **Bulk Pipe Read** | `IN` | `65,536` B (`0x10000`) or `35,328` B (`0x8A00`) | `10` s | `0x0043221D` | `0x00011B66` |
 | 7 | `0xD9 0x2A` | **Bulk Pipe Write** | `OUT` | `65,536` B (`0x10000`) or `35,328` B (`0x8A00`) | `10` s | `0x004322FF` | `0x00011C14` |
-| 8 | `0xDA 0x28` | **Virtual Disk Sector Read** (from bridge) | `IN` | `N * 512` B | `10` s | `0x004323F8` | — |
-| 9 | `0xDA 0x2A` | **Virtual Disk Sector Write** (to bridge) | `OUT` | `N * 512` B | `10` s | `0x004324C4` | — |
+| 8 | `0xDA 0x28` | **Virtual Disk Sector Read** (from bridge) | `IN` | `N * 512` B | `5` s | `0x004323F8` | — |
+| 9 | `0xDA 0x2A` | **Virtual Disk Sector Write** (to bridge) | `OUT` | `N * 512` B | `5` s | `0x004324C4` | — |
 | 10 | `0xDB 0x28` | **Vendor Flash / Config Read** | `IN` | `512` B (`0x200`) | `2` s | `0x004328FE` | — |
 
 ---
@@ -138,17 +138,21 @@ Reads internal bridge registers, USB link speed, peer operating mode, or pipe po
   Hex:   D8  00  <op_type> <param_hi> <param_lo> 00..00 4F  54
   ```
 
-    + `cdb[2]` (`op_type`): Register selector (`1`, `2`, `3`, or `5`).
+    + `cdb[2]` (`op_type`): Register selector (`1`, `2`, `3`, or `5` used by `EasySuite.exe`/`usbnic.sys`; hardware probing confirms `0..7` are valid in `fw_rev = 3`, while `8..15` return `05/20/00` Invalid Command Operation Code).
     + `cdb[3..4]` (`param`, `uint16_be`): Big-endian parameter (`local_queued_blocks` when `op_type == 3`, else `0x0000`).
-- **Data Stage:** `IN`, `8` bytes requested in `EasySuite.exe` SPTI (`0x0043207D`); on the USB wire, the OTi-2108 returns a short Bulk IN packet of `2` bytes for `op_type=1, 2, 5` or `7` bytes for `op_type=3` (matching `usbnic.sys` `0x000118D1` and `0x00011650`).
+- **Data Stage:** `IN`, `8` bytes requested in `EasySuite.exe` SPTI (`0x0043207D`); on the USB wire, the OTi-2108 returns a short Bulk IN packet of `2` bytes for `op_type=0, 1, 2, 4, 5, 6, 7` or `7` bytes for `op_type=3` (matching `usbnic.sys` `0x000118D1` and `0x00011650`).
 - **`op_type` Response Definitions:**
 
 | `op_type` | Purpose | Response Byte Layout | Behavioral Rule |
 | :---: | :--- | :--- | :--- |
+| **`0`** | **Undocumented Status Register** *(hardware-probed only)* | `resp[0..1]` (`uint16_be`, `2` B) | Accepted by `fw_rev = 3` (observed `00 04` via `SG_IO`, `00 05` via `libusb`); not queried by `EasySuite.exe` or `usbnic.sys`. |
 | **`1`** | **Hardware Buffer Size** (`0x004326BA` / `0x0043270E`) | `resp[1]` = size code (`0..6`) | Maps `resp[1]` (`[ebp-0x1f]`) to internal bridge capacity:<br/>`0` $\rightarrow$ query `0xDB 0x28` (`addr=0x0022`) `"OTiMing"` custom size (fallback `0x80000` = 512 KB)<br/>`1` or `2` $\rightarrow$ `0x40000` (256 KB)<br/>`3` or `4` $\rightarrow$ `0x80000` (512 KB)<br/>`5` $\rightarrow$ `0x100000` (1 MB)<br/>`6` $\rightarrow$ `0x200000` (2 MB). |
 | **`2`** | **USB Link Speed** (`0x00431CE3`, `0x00419948`, `usbnic` `0x000118C0`) | `resp[0]` = local port speed (`0x20` = USB 2.0, `0x11` = USB 1.1)<br/>`resp[1]` = peer/link speed (`0x20` = USB 2.0, `0x11` = USB 1.1) | In `EasySuite.exe`, `resp[0] == 0x20` sets local USB 2.0 flag (`[0x45FFE0] = 1`), and `resp[1] == 0x20` sets peer USB 2.0 flag (`[0x45FFE4] = 1`). In `usbnic.sys` (`0x000118C0`), `resp[1] == 0x20` reports `4,800,000` (480 Mbps in 100 bps NDIS units); `resp[1] == 0x11` reports `120,000` (12 Mbps). |
 | **`3`** | **Link & Pipe Poll** (`0x004321F0`, `0x0041C4AF`, `usbnic` `0x00011640`) | **7 bytes (`resp[0..6]`):**<br/>`resp[0]` = `action_code` (`0..7`)<br/>`resp[1..2]` = `remote_queued_blocks` (`uint16_be`)<br/>`resp[1..4]` = `virtual_lba` (`uint32_be`)<br/>`resp[5..6]` = `sector_count` (`uint16_be`) | Passes `param = local_queued_blocks` in `cdb[3..4]`. Dispatches `action_code` (`0..7`) via the Poll State Machine (Section 6). |
+| **`4`** | **Hardware Timeout Readback** *(hardware-probed only)* | `resp[0..1]` = timeout in ms (`uint16_be`, `2` B) | Returns `0x1388` (`5000` ms) on idle hardware—the readback counterpart of `0xD8 0x01 cmd=4`. Not queried by `EasySuite.exe` or `usbnic.sys`. |
 | **`5`** | **Peer Operating Mode** (`0x00431C5B`, `0x0041C6B5`) | `resp[0..1]` = `peer_mode` (`uint16_be`) | `0x007F` = Peer active in **Transfer Line Mode** (`EasySuite.exe`).<br/>`0x0044` = Peer active in **Virtual NIC Mode** (`usbnic.sys`, triggers string `0xF042` `"Remote is running at NetWork Mode!!"`).<br/>`0x0000` = Peer not yet initialized. |
+| **`6`** | **Undocumented Status Register** *(hardware-probed only)* | `resp[0..1]` (`uint16_be`, `2` B) | Accepted by `fw_rev = 3` (returns `00 00` when idle); not queried by `EasySuite.exe` or `usbnic.sys`. |
+| **`7`** | **Undocumented Status Register** *(hardware-probed only)* | `resp[0..1]` (`uint16_be`, `2` B) | Accepted by `fw_rev = 3` (returns `00 00` when idle; aligns with `0xD8 0x01 cmd=7`); not queried by `EasySuite.exe` or `usbnic.sys`. |
 
 ---
 
@@ -213,7 +217,7 @@ Writes a bulk block into the bridge's host-to-host FIFO pipe after `0xD8 0x00 op
 ---
 
 #### 3.2.6 `0xDA 0x28` & `0xDA 0x2A` — Virtual Disk Sector Read/Write (`0x004323F8` / `0x004324C4`)
-Used when the bridge services virtual disk sector I/O (`action_code == 2` or `3` in the poll loop).
+Used when the bridge services host-backed virtual disk sector I/O (`action_code == 2` or `3` in the poll loop, or via `0x0041DBD4` when a `0xD9 0x2A` bulk write is preempted with sense `09/88/00` or `09/89/00`). Both SPTI wrappers (`0x004323F8` / `0x004324C4`) and ASPI wrappers (`0x00432D2B` / `0x00432D89`) use a **5 s** timeout.
 
 - **`0xDA 0x28` (Read `N * 512` Bytes from Bridge for Sector Write to Host Backing File):**
 
@@ -222,7 +226,9 @@ Used when the bridge services virtual disk sector I/O (`action_code == 2` or `3`
   Hex:   DA  28  64  00..00  4F  54
   ```
 
+    + `cdb[2]`: `0x64` in SPTI (`0x004323F8`), `0x00` in ASPI (`0x00432D3B`).
     + Data Stage: `IN`, `sector_count * 512` bytes.
+    + Status Mapping: SPTI maps SCSI status `0xFF` or decoded sense code `0x04` to internal code `0x15`.
 - **`0xDA 0x2A` (Write `N * 512` Bytes to Bridge for Sector Read from Host Backing File):**
 
   ```text
@@ -231,6 +237,11 @@ Used when the bridge services virtual disk sector I/O (`action_code == 2` or `3`
   ```
 
     + Data Stage: `OUT`, `sector_count * 512` bytes.
+    + Status Mapping: SPTI maps SCSI status `0xFF` or decoded sense code `0x04` to internal code `0x16`.
+
+> [!NOTE]
+> **Dormant Feature in `EasySuite.exe` & Single-LUN EasySync Firmware:**
+> In `EasySuite.exe`, the backing-file path (`this + 0x654` / `0x45FFDC`) is never populated (always `""`), and tested single-LUN EasySync OTi-2108 cables (`MaxLUN = 0`, CD-ROM Inquiry `"EasySync 1.30"`, `fw_rev = 3`) never emit `action_code == 2` or `3` during normal Transfer Line or Virtual NIC sessions. Probing `0xDA 0x28` directly while idle (both `cdb[2] = 0x64` and `0x00`) returns SCSI Check Condition **`05/20/00`** (*Invalid Command Operation Code*) over `SG_IO` and Bulk IN STALL over `libusb`. Clean-room implementations should still include a lightweight defensive handler (either backed by an optional raw disk image using 64-bit byte offsets, or returning zero-filled sectors / discarding writes) so the bridge state machine cannot wedge if a multi-LUN or virtual-disk firmware build emits `action_code == 2/3` or sense `09/88/00` / `09/89/00`.
 
 ---
 
@@ -274,9 +285,9 @@ and maps it to an internal 16-bit transport status code (`ax`):
 | `0x098400` | `0x09` | `0x84` | `0x00` | `0x000D` | **OTi Vendor:** Peer Reset / Transfer Aborted (`cmd=7/8` flush triggered) |
 | `0x098500` | `0x09` | `0x85` | `0x00` | `0x0013` | **OTi Vendor:** Peer Not Reading / Waiting for Peer (Bulk Write `0xD9 0x2A` pipe blocked; non-fatal retry in `0x0041C3FA`) |
 | `0x098600` | `0x09` | `0x86` | `0x00` | `0x000E` | **OTi Vendor:** Peer Mode Conflict |
-| `0x098700` | `0x09` | `0x87` | `0x00` | `0x0017` | **OTi Vendor:** Hardware FIFO Underrun |
-| `0x098800` | `0x09` | `0x88` | `0x00` | `0x0018` | **OTi Vendor:** Hardware FIFO Overrun |
-| `0x098900` | `0x09` | `0x89` | `0x00` | `0x0019` | **OTi Vendor:** Hardware Link Lost |
+| `0x098700` | `0x09` | `0x87` | `0x00` | `0x0017` | **OTi Vendor:** Transient Bulk Write Retry (`0x0041BF68` retries current `0xD9 0x2A` block) |
+| `0x098800` | `0x09` | `0x88` | `0x00` | `0x0018` | **OTi Vendor:** Virtual Disk Request Pending (`0x0041BF53` / `0x0041C0D8` invokes `0x0041DBD4` to service `0xDA 0x2A`/`0xDA 0x28`, then retries `0xD9 0x2A`) |
+| `0x098900` | `0x09` | `0x89` | `0x00` | `0x0019` | **OTi Vendor:** Virtual Disk Request Pending (`0x0041BF59` / `0x0041C0E7` invokes `0x0041DBD4` to service `0xDA 0x2A`/`0xDA 0x28`, then retries `0xD9 0x2A`) |
 | Any other | `*` | `*` | `*` | `0xFFFF` | Unrecognized Sense Error |
 
 ---
@@ -357,6 +368,8 @@ Once initialized, a dedicated worker thread (`0x00433260` $\rightarrow$ `0x0041B
    + Sends it via `0xD9 0x2A` (Bulk Pipe Write).
    + If sense code `0x000D` (`09/84/00` Peer Reset/Abort) occurs, flushes pipes (`cmd = 7`, `cmd = 8`) and aborts the burst.
    + If sense code `0x0013` (`09/85/00` Peer Not Reading / Waiting for Peer) occurs (`0x0041C3FA`), the burst is not aborted; the state machine resets `state = 0` and returns to the poll loop for the peer to drain the FIFO.
+   + If sense code `0x0018` (`09/88/00`) or `0x0019` (`09/89/00`) occurs (`0x0041BF53` SPTI / `0x0041C0D8` ASPI), invokes `0x0041DBD4` to poll `0xD8 0x00 op_type=3` and service any pending `action_code == 2` (`0xDA 0x2A`) or `action_code == 3` (`0xDA 0x28`) virtual disk sector request, then retries the same `0xD9 0x2A` block.
+   + If sense code `0x0017` (`09/87/00`) occurs (`0x0041BF68` SPTI), retries the same `0xD9 0x2A` block immediately.
 3. Resets `state = 0` (Poll).
 
 ### 6.3 State 2: Bulk Read (`0x0041C164`)
@@ -388,10 +401,14 @@ Captured from physical OTi-2108 hardware over both direct USB Bulk-Only Transpor
 | Command | CDB (16 Bytes) | Wire Payload Length | Raw Hex Response (`libusb`) | Decoded Meaning |
 | :--- | :--- | :---: | :--- | :--- |
 | **Identify (`0xF0`)** | `F0 00..00 4F 54` | `12` B | `000021080003303330373239` | Chip BCD `2108`, Firmware Rev `3` (`extended_cap_flag = 1`), Build Date `"030729"` (`2003-07-29`) |
+| **Status `op_type=0`** | `D8 00 00 00..00 4F 54` | `2` B | `0005` (`0004` via `SG_IO`) | Undocumented valid 2-byte status register (`--probe-d8-ops`) |
 | **Status `op_type=1`** | `D8 00 01 00..00 4F 54` | `2` B | `0004` | `size_code = 4` (`512 KB` / `524,288` B internal flash/buffer capacity; no `"OTiMing"` override needed) |
 | **Status `op_type=2`** | `D8 00 02 00..00 4F 54` | `2` B | `2000` | Local USB port = `0x20` (USB 2.0 High-Speed, 480 Mbps); Peer USB port = `0x00` (unplugged/idle) |
 | **Status `op_type=3`** | `D8 00 03 00 00 00..00 4F 54` | `7` B | `01000000000000` | `action_code = 1` (`Idle / Link OK`), `remote_queued_blocks = 0`, `virtual_lba = 0`, `sector_count = 0` |
+| **Status `op_type=4`** | `D8 00 04 00..00 4F 54` | `2` B | `1388` | Hardware timeout readback = `0x1388` (`5000` ms, mirrors `0xD8 0x01 cmd=4`) |
 | **Status `op_type=5`** | `D8 00 05 00..00 4F 54` | `2` B | `007f` | Default power-on mode = `0x007F` (Transfer Line Mode) |
+| **Status `op_type=6, 7`** | `D8 00 06/07 00..00 4F 54` | `2` B | `0000` | Undocumented valid 2-byte registers (`op_type=8..15` return `05/20/00` Invalid Opcode) |
+| **Virtual Disk Read (`0xDA 0x28`)** | `DA 28 64/00 00..00 4F 54` | — | Check Condition `05/20/00` | Rejected as Invalid Command Operation Code when idle (`SG_IO` `05/20/00`, `libusb` Bulk IN STALL) |
 | **Flash Config (`0xDB 0x28`)** | `DB 28 00 00 00 22 00 00 01 00..00 4F 54` | `512` B | `00..00` (all zeroes) | No `"OTiMing"` override block (since `op_type=1` returned standard `size_code = 4`) |
 
 > [!NOTE]
