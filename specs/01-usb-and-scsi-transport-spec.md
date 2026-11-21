@@ -171,7 +171,7 @@ Writes control registers, hardware timeouts, operating mode flags, or pipe reset
 | `cmd` | Purpose | `val` (`cdb[3..4]`) | Call Sites & Behavior |
 | :---: | :--- | :--- | :--- |
 | **`4`** | **Set Hardware Timeout (ms)** | `0x1388` (`5000` ms)<br/>`0x2710` (`10000` ms) | Called during init (`0x0041B5D8` with `0x1388` / `5000` ms), destructor (`0x00431A29` with `0x1388` / `5000` ms), and bulk transfer setup (`0x00421938` via `0x0041BEB5`, `0x0041C1B3` with `timeout_sec * 1000`). |
-| **`5`** | **Set Local Operating Mode** | `0x007F` (Transfer Line)<br/>`0x0044` (Virtual NIC)<br/>`0x0000` (Offline/Reset) | `EasySuite.exe` writes `val = 0x007F` on startup (`0x00431CC8`, `0x00431D15`, `0x00420A4D`) and `val = 0x0000` on disconnect/shutdown (`0x00420A2E`).<br/>`usbnic.sys` writes `val = 0x0044` on init (`0x00010934`) and `val = 0x0000` on halt (`0x00010A4C`). |
+| **`5`** | **Set Local Operating Mode** | `0x007F` (Transfer Line)<br/>`0x0044` (Virtual NIC)<br/>`0x0000` (Offline/Reset) | `EasySuite.exe` writes `val = 0x007F` on startup/re-arm (`0x00431CC8`, `0x00431D15`, `0x00420A4D`) and leaves its local mode at `0x007F` on disconnect.<br/>`usbnic.sys` writes `val = 0x0044` on init (`0x00010934`) and `val = 0x0000` on halt (`0x00010A4C`). |
 | **`7`** | **Flush / Reset TX Pipe** | `0x0000` | Called during error/transfer reset recovery (`0x0043258B` via `0x0041D014`, `0x0043299E`, `0x0041CC58`); not issued during normal startup. |
 | **`8`** | **Flush / Reset RX Pipe** | `0x0000` | Called during error/transfer reset recovery (`0x0043258B` via `0x0041D014`, `0x004329B3`, `0x0041CC71`); not issued during normal startup. |
 
@@ -367,11 +367,11 @@ Once initialized, a dedicated worker thread (`0x00433260` $\rightarrow$ `0x0041B
 3. If `remote_blocks == 0`, issues `0xD8 0x00` (`op_type = 5`) to check if the peer switched to Virtual NIC mode (`0x0044`, posting error `0xF042` `"Remote is running at NetWork Mode!!"`).
 4. Resets `state = 0` (Poll).
 
-### 6.4 Teardown, Disconnect, and Offline Sequencing (`0x00420A2E`)
+### 6.4 Teardown, Disconnect, and Offline Sequencing (`0x00431A0B` / `usbnic.sys` `0x00010A4C`)
 
-When terminating the session or shutting down the application:
+When terminating the session or shutting down a clean-room implementation (or `usbnic.sys` on halt):
 1. Stop and join the background link polling worker thread (`LinkPoller`).
-2. Put the bridge into offline/reset mode via `CDB 0xD8 0x01` (`cmd = 5, val = 0x0000`).
+2. Put the bridge into offline/reset mode via `CDB 0xD8 0x01` (`cmd = 5, val = 0x0000`; issued by `usbnic.sys` at `0x00010A4C`, whereas `EasySuite.exe` leaves its local mode at `0x007F` on disconnect).
 3. Reset hardware timeout to default via `CDB 0xD8 0x01` (`cmd = 4, val = 0x1388` / 5000 ms at `0x00431A29`).
 4. Close the SCSI pass-through or USB device handle.
 
