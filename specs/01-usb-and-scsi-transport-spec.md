@@ -69,6 +69,14 @@ Constructed identically to `usbnic.sys` (`0x0001199C..0x00011C60`):
 
 4. **Auto-Sense on `bCSWStatus == 0x01`:** When using direct `libusb` BOT, if `bCSWStatus == 0x01`, the transport layer MUST immediately issue a standard 6-byte SCSI `REQUEST SENSE` CDB (`03 00 00 00 12 00`, `bmCBWFlags = 0x80`, `dCBWDataTransferLength = 18`) to retrieve the 18-byte sense buffer (`sense_key = sense[2] & 0x0F`, `asc = sense[12]`, `ascq = sense[13]`).
 
+#### 2.1.3 USB BOT Timeout & Error Recovery
+A USB timeout during the BOT Data stage or CSW stage leaves the OTi-2108 bridge's Bulk-Only Transport state machine desynchronized until standard USB Mass Storage **BOT Reset Recovery** is issued:
+1. Send a **Bulk-Only Mass Storage Reset** class-specific control transfer on Endpoint 0:
+   - `bmRequestType = 0x21` (Host-to-Device, Class, Interface)
+   - `bRequest = 0xFF` (`BULK_ONLY_MASS_STORAGE_RESET`)
+   - `wValue = 0x0000`, `wIndex = 0x0000` (`bInterfaceNumber`), `wLength = 0`
+2. Clear any halted/stalled state (`CLEAR_FEATURE(ENDPOINT_HALT)` / `libusb_clear_halt`) on both the **Bulk IN** and **Bulk OUT** endpoints before issuing the next CBW.
+
 ### 2.2 Backend B: OS SCSI Pass-Through (`SG_IO` / `SPTI`)
 When the OS mass-storage driver remains bound to the OTi-2108:
 - **Linux (`SG_IO`):** Open `/dev/sgX` (or `/dev/srX` / `/dev/sdX`) with `O_RDWR | O_NONBLOCK` and issue `ioctl(fd, SG_IO, &sg_io_hdr)`. The Linux kernel automatically issues `REQUEST SENSE` on Check Condition and populates `sbp`.
@@ -162,10 +170,10 @@ Writes control registers, hardware timeouts, operating mode flags, or pipe reset
 
 | `cmd` | Purpose | `val` (`cdb[3..4]`) | Call Sites & Behavior |
 | :---: | :--- | :--- | :--- |
-| **`4`** | **Set Hardware Timeout (ms)** | `0x0FA0` (`4000` ms)<br/>`0x1388` (`5000` ms)<br/>`0x2710` (`10000` ms) | Called during init (`0x0043269A` with `4000`), destructor (`0x00431A29` with `5000`), and bulk transfer setup (`0x0041BEB5`, `0x0041C1B3` with `timeout_sec * 1000`). |
-| **`5`** | **Set Local Operating Mode** | `0x007F` (Transfer Line)<br/>`0x0044` (Virtual NIC)<br/>`0x0000` (Offline/Reset) | `EasySuite.exe` writes `val = 0x007F` on startup (`0x00431CC8`, `0x00420A4D`) and `val = 0x0000` on disconnect/shutdown (`0x00420A2E`).<br/>`usbnic.sys` writes `val = 0x0044` on init (`0x00010934`) and `val = 0x0000` on halt (`0x00010A4C`). |
-| **`7`** | **Flush / Reset TX Pipe** | `0x0000` | Called during hardware init (`0x004327E7`) and error recovery (`0x0043299E`, `0x0041CC58`). |
-| **`8`** | **Flush / Reset RX Pipe** | `0x0000` | Called during hardware init (`0x004327CC`) and error recovery (`0x004329B3`, `0x0041CC71`). |
+| **`4`** | **Set Hardware Timeout (ms)** | `0x1388` (`5000` ms)<br/>`0x2710` (`10000` ms) | Called during init (`0x0041B5D8` with `0x1388` / `5000` ms), destructor (`0x00431A29` with `0x1388` / `5000` ms), and bulk transfer setup (`0x00421938` via `0x0041BEB5`, `0x0041C1B3` with `timeout_sec * 1000`). |
+| **`5`** | **Set Local Operating Mode** | `0x007F` (Transfer Line)<br/>`0x0044` (Virtual NIC)<br/>`0x0000` (Offline/Reset) | `EasySuite.exe` writes `val = 0x007F` on startup (`0x00431CC8`, `0x00431D15`, `0x00420A4D`) and `val = 0x0000` on disconnect/shutdown (`0x00420A2E`).<br/>`usbnic.sys` writes `val = 0x0044` on init (`0x00010934`) and `val = 0x0000` on halt (`0x00010A4C`). |
+| **`7`** | **Flush / Reset TX Pipe** | `0x0000` | Called during error/transfer reset recovery (`0x0043258B` via `0x0041D014`, `0x0043299E`, `0x0041CC58`); not issued during normal startup. |
+| **`8`** | **Flush / Reset RX Pipe** | `0x0000` | Called during error/transfer reset recovery (`0x0043258B` via `0x0041D014`, `0x004329B3`, `0x0041CC71`); not issued during normal startup. |
 
 ---
 
@@ -290,7 +298,7 @@ sequenceDiagram
     Bridge-->>Host: 00 00 21 08 00 <fw_rev> ...
     Host->>Bridge: 2. CDB 0x00 (TEST UNIT READY)
     Bridge-->>Host: OK or Sense 02/3A/00 (Medium Not Present)
-    Host->>Bridge: 3. CDB 0xD8 0x01 (cmd=4, val=4000 ms timeout)
+    Host->>Bridge: 3. CDB 0xD8 0x01 (cmd=4, val=5000 ms / 0x1388 timeout)
     Bridge-->>Host: OK
     Host->>Bridge: 4. CDB 0xD8 0x00 (op_type=1, IN: Query Buffer Size)
     Bridge-->>Host: resp[1] = 0..6 (256KB..2MB, or 0 -> 0xDB 0x28 override)
@@ -304,13 +312,11 @@ sequenceDiagram
     Bridge-->>Host: resp[0..1] (0x007F, 0x0044, or 0x0000)
     Host->>Bridge: 8. CDB 0xD8 0x01 (cmd=5, val=0x007F: Enter Transfer Line Mode)
     Bridge-->>Host: OK
-    Host->>Bridge: 9. CDB 0xD8 0x01 (cmd=8, val=0: Flush RX Pipe)
-    Host->>Bridge: 10. CDB 0xD8 0x01 (cmd=7, val=0: Flush TX Pipe)
 ```
 
 > [!IMPORTANT]
-> **Hardware Pipe Flushes and Startup Race Contention:**
-> EasySuite.exe flushes the hardware RX and TX pipes (`CDB 0xD8 0x01` `cmd=8` and `cmd=7` at `0x0041D014` / `0x0043258B`) immediately **after** setting Transfer Line Mode (`0x007F`) and before starting its background link polling thread. If an initiating peer transmits data before the link settles, the transmitted block will either time out with SCSI sense `09/85/00` (`Peer Not Reading / Waiting for Peer`) or get wiped from the bridge FIFO by the incoming peer's startup `cmd=8` flush. Initiating hosts must allow the link to settle (monitoring for quieting and peer startup bursts such as `0x01`, `0x0F`, `0x39`) before dispatching interactive client commands.
+> **Startup Behavior & Pipe Flushes:**
+> `EasySuite.exe` does **not** issue `cmd=8` (Flush RX) or `cmd=7` (Flush TX) during normal startup (`0x00431C25` / `0x004325DC`); `cmd=8` and `cmd=7` are only issued via `0x0043258B` (`0x0041D014`) during error/transfer reset recovery (such as sense `0x098400`). If an initiating peer transmits data before the link settles, the transmitted block can time out with SCSI sense `09/85/00` (`Peer Not Reading / Waiting for Peer`). Initiating hosts should allow the link to settle (monitoring for quieting and peer startup bursts such as `0x01`, `0x0F`, `0x39`) before dispatching interactive client commands.
 
 ---
 
@@ -338,9 +344,10 @@ Once initialized, a dedicated worker thread (`0x00433260` $\rightarrow$ `0x0041B
 | **`6`** | `0x0041C5B1` | **Bridge Ready for Bulk Write (Single/Capped)** | Sets status `0xFF03`, `blocks_to_send = local_queued_blocks` (`[this+0x61C]`), and transitions to **`state = 1` (Bulk Write)**. |
 | **`7`** | `0x0041C584` | **Bridge Ready for Bulk Write (Batch)** | Sets status `0xFF01`, `blocks_to_send = min(local_queued_blocks, max_burst)` (`[this+0x61C]`), and transitions to **`state = 1` (Bulk Write)**. |
 
-5. **Link Liveness & Mode Verification (`0x0041C680` & `0x0FBB` Handler `0x0041CE3F`):**
+5. **Link Liveness, Mode Verification, and Post-Offline Re-Arm Window (`0x0041C680` & `0x0FBB` Handler `0x0041CE3F`):**
    + When `di` is not `0xFF00`/`0x0A`/`0xFF06`, `[0x4800B0] == 0`, and `[0x45FA94] != 0`, the poll thread issues `0xD8 0x00` (`op_type = 5`) to verify the peer is still in `0x007F`; if not, it clears `[0x45FA94] = 0` and posts `0x0FBB`.
    + Posting `0x0FBB` invokes `0x0041CE07` $\rightarrow$ `0x0041CE3F`, which runs `TEST UNIT READY` (`0x00`) to check local USB device presence (closing the handle, posting `0x0FBD wParam=2` $\rightarrow$ `ThunderBirdQuit`, and re-scanning drives if it fails), followed by `0xD8 0x00` (`op_type = 5`) to check peer mode (canceling transfers and posting `0x0FBD wParam=0xFF06` $\rightarrow$ `ThunderBirdRemoteOffline` and alert `0xF042` if `resp != 0x007F`).
+   + **Post-Offline ~5 s Re-Arm Window:** After observing peer `MODE_OFFLINE` (`0x0000`) and clearing `[0x45FA94] = 0`, `EasySuite.exe` waits for `action_code = 1` (`01000000000000`, which the bridge reports ~5.0 s after `MODE_OFFLINE`) before executing the `0x0041C5E4` branch to re-send `0xD8 0x01` (`cmd = 5, val = 0x007F`). If a peer re-enters `0x007F` and sends `0xD9 0x2A` before that ~5 s transition completes, `EasySuite.exe`'s poll (`op_type = 3`) stays in `action_code = 5` or `7`, never hits `action_code = 1` to re-arm `0x007F`, and ignores `0xD9 0x2A` (returning `0x098500` Peer Not Reading / Waiting for Peer) until a `> 5 s` `MODE_OFFLINE` cycle lets `EasySuite.exe` observe `action_code = 1`.
    + When transitioning from disconnected (`[0x4800B0] == 0`) on `0x0FBD` (`0xFF01..0xFF03`, `0`, `0x0D..0x0E`, `0x12..0x13`), the UI handler (`0x004198F1`) queries `0xD8 0x00` (`op_type = 2`) for peer USB speed (`resp[1] == 0x20`), issues Client Command `0x01`, and sets `[0x4800B0] = 1`, `[0x4800AC] = 1`.
 
 ### 6.2 State 1: Bulk Write (`0x0041BE83`)
