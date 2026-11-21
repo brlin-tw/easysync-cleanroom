@@ -72,9 +72,9 @@ Constructed identically to `usbnic.sys` (`0x0001199C..0x00011C60`):
 #### 2.1.3 USB BOT Timeout & Error Recovery
 A USB timeout during the BOT Data stage or CSW stage leaves the OTi-2108 bridge's Bulk-Only Transport state machine desynchronized until standard USB Mass Storage **BOT Reset Recovery** is issued:
 1. Send a **Bulk-Only Mass Storage Reset** class-specific control transfer on Endpoint 0:
-   - `bmRequestType = 0x21` (Host-to-Device, Class, Interface)
-   - `bRequest = 0xFF` (`BULK_ONLY_MASS_STORAGE_RESET`)
-   - `wValue = 0x0000`, `wIndex = 0x0000` (`bInterfaceNumber`), `wLength = 0`
+   + `bmRequestType = 0x21` (Host-to-Device, Class, Interface)
+   + `bRequest = 0xFF` (`BULK_ONLY_MASS_STORAGE_RESET`)
+   + `wValue = 0x0000`, `wIndex = 0x0000` (`bInterfaceNumber`), `wLength = 0`
 2. Clear any halted/stalled state (`CLEAR_FEATURE(ENDPOINT_HALT)` / `libusb_clear_halt`) on both the **Bulk IN** and **Bulk OUT** endpoints before issuing the next CBW.
 
 ### 2.2 Backend B: OS SCSI Pass-Through (`SG_IO` / `SPTI`)
@@ -334,15 +334,15 @@ Once initialized, a dedicated worker thread (`0x00433260` $\rightarrow$ `0x0041B
    + Any other error code: sleeps **50 ms**.
 4. On success (`ax == 0`), read the 7-byte response `resp[0..6]` (`0x0041C4AF..0x0041C4DE` / `usbnic.sys` `0x00011650`) and dispatch on `action_code = resp[0]` (jump table at `0x0041C7F5`; ASPI jump table at `0x0041CCDF`):
 
-| `action_code` | Target VA | Meaning | State Transition & Action |
-| :---: | :--- | :--- | :--- |
-| **`0` or `1`** | `0x0041C5E4` | **Idle / Peer Offline** | Sets status `0xFF00` and sleeps **100 ms** (`0x64`). If the session is currently marked connected (`[0x4800AC] != 0`), posts `0x0FBD` (`wParam = 0xFF00`) to transition the UI/plugins to **Peer Offline** (`ThunderBirdRemoteOffline`, `[0x4800B0] = 0`, `[0x4800AC] = 0`). If Transfer Line Mode is not yet active (`[0x45FA94] == 0`), issues `0xD8 0x01` (`cmd = 5, val = 0x007F`) and sets `[0x45FA94] = 1`. |
-| **`2`** | `0x0041C5F2` | **Virtual Disk Sector Read** | Extracts `lba = be32(resp[1..4])` (`[ebp-0x18]`) and `sec_cnt = be16(resp[5..6])` (`[ebp-0x20]`). Calls `0x0041D9B1` to seek backing file (`[this+0x654]`) to `lba * 512`, read `sec_cnt * 512` bytes, and write them to the bridge via `0xDA 0x2A`. Sleeps **1 ms**; stays in `state = 0`. |
-| **`3`** | `0x0041C609` | **Virtual Disk Sector Write** | Extracts `lba = be32(resp[1..4])` (`[ebp-0x18]`) and `sec_cnt = be16(resp[5..6])` (`[ebp-0x20]`). Calls `0x0041DA5C` to read `sec_cnt * 512` bytes from the bridge via `0xDA 0x28` and write them to backing file (`[this+0x654]`) at `lba * 512`. Sleeps **1 ms**; stays in `state = 0`. |
-| **`4`** | `0x0041C627` | **Drive / Peer Mode Event** | Posts UI notification `0x0FBB` (`WM_USER` event) to trigger hardware/peer re-verification and sleeps **5 ms**. Stays in `state = 0`. |
-| **`5`** | `0x0041C4EE` | **Remote Has Bulk Blocks** | Extracts `remote_blocks = be16(resp[1..2])`, stores in `[this+0x618]`, sets status `0xFF02`, and transitions to **`state = 2` (Bulk Read)**. |
-| **`6`** | `0x0041C5B1` | **Bridge Ready for Bulk Write (Single/Capped)** | Sets status `0xFF03`, `blocks_to_send = local_queued_blocks` (`[this+0x61C]`), and transitions to **`state = 1` (Bulk Write)**. |
-| **`7`** | `0x0041C584` | **Bridge Ready for Bulk Write (Batch)** | Sets status `0xFF01`, `blocks_to_send = min(local_queued_blocks, max_burst)` (`[this+0x61C]`), and transitions to **`state = 1` (Bulk Write)**. |
+   | `action_code` | Target VA | Meaning | State Transition & Action |
+   | :---: | :--- | :--- | :--- |
+   | **`0` or `1`** | `0x0041C5E4` | **Idle / Peer Offline** | Sets status `0xFF00` and sleeps **100 ms** (`0x64`). If the session is currently marked connected (`[0x4800AC] != 0`), posts `0x0FBD` (`wParam = 0xFF00`) to transition the UI/plugins to **Peer Offline** (`ThunderBirdRemoteOffline`, `[0x4800B0] = 0`, `[0x4800AC] = 0`). If Transfer Line Mode is not yet active (`[0x45FA94] == 0`), issues `0xD8 0x01` (`cmd = 5, val = 0x007F`) and sets `[0x45FA94] = 1`. |
+   | **`2`** | `0x0041C5F2` | **Virtual Disk Sector Read** | Extracts `lba = be32(resp[1..4])` (`[ebp-0x18]`) and `sec_cnt = be16(resp[5..6])` (`[ebp-0x20]`). Calls `0x0041D9B1` to seek backing file (`[this+0x654]`) to `lba * 512`, read `sec_cnt * 512` bytes, and write them to the bridge via `0xDA 0x2A`. Sleeps **1 ms**; stays in `state = 0`. |
+   | **`3`** | `0x0041C609` | **Virtual Disk Sector Write** | Extracts `lba = be32(resp[1..4])` (`[ebp-0x18]`) and `sec_cnt = be16(resp[5..6])` (`[ebp-0x20]`). Calls `0x0041DA5C` to read `sec_cnt * 512` bytes from the bridge via `0xDA 0x28` and write them to backing file (`[this+0x654]`) at `lba * 512`. Sleeps **1 ms**; stays in `state = 0`. |
+   | **`4`** | `0x0041C627` | **Drive / Peer Mode Event** | Posts UI notification `0x0FBB` (`WM_USER` event) to trigger hardware/peer re-verification and sleeps **5 ms**. Stays in `state = 0`. |
+   | **`5`** | `0x0041C4EE` | **Remote Has Bulk Blocks** | Extracts `remote_blocks = be16(resp[1..2])`, stores in `[this+0x618]`, sets status `0xFF02`, and transitions to **`state = 2` (Bulk Read)**. |
+   | **`6`** | `0x0041C5B1` | **Bridge Ready for Bulk Write (Single/Capped)** | Sets status `0xFF03`, `blocks_to_send = local_queued_blocks` (`[this+0x61C]`), and transitions to **`state = 1` (Bulk Write)**. |
+   | **`7`** | `0x0041C584` | **Bridge Ready for Bulk Write (Batch)** | Sets status `0xFF01`, `blocks_to_send = min(local_queued_blocks, max_burst)` (`[this+0x61C]`), and transitions to **`state = 1` (Bulk Write)**. |
 
 5. **Link Liveness, Mode Verification, and Post-Offline Re-Arm Window (`0x0041C680` & `0x0FBB` Handler `0x0041CE3F`):**
    + When `di` is not `0xFF00`/`0x0A`/`0xFF06`, `[0x4800B0] == 0`, and `[0x45FA94] != 0`, the poll thread issues `0xD8 0x00` (`op_type = 5`) to verify the peer is still in `0x007F`; if not, it clears `[0x45FA94] = 0` and posts `0x0FBB`.
