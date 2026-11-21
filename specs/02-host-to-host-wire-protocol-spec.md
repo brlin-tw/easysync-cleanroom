@@ -85,7 +85,7 @@ Client Commands are sent by the initiating host (`0x0040D9C9..0x0040F800`) and h
 | **`0x06`** | **Remove Remote Directory** | `0x0040EE3A` | `0x0043D90F` | `0xA1` (`status=0` or `1`) | `[0x06][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `RemoveDirectoryW`/`A`, non-recursive / empty directories only, replies 24B `0xA1`) |
 | **`0x07`** | **Create Remote Directory** | `0x0040EF0A` | `0x0043DA61` | `0xA1` (`status=0` or `1`) | `[0x07][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]` (calls `CreateDirectoryW`, replies 24B `0xA1`) |
 | **`0x08`** | **Delete Remote File (or Empty Directory)** | `0x0040EC14` | `0x0043DBD1` | `0xA1` (`status=0` or `1`) | `[0x08][req_id:u32_le][path_len:u16_le][file_path:wchar_t]` (calls `0x0044095D`: clears `0x27` attrs, dispatches to `RemoveDirectoryW`/`A` if `FILE_ATTRIBUTE_DIRECTORY` else `DeleteFileW`/`A`; replies 24B `0xA1`) |
-| **`0x09`** | **Rename Remote File or Directory** | `0x0040ECE4` | `0x0043DD10` | `0xA1` (`status=0` or `1`) | `[0x09][req_id:u32_le][old_len:u16_le][new_len:u16_le][old_path:wchar_t][new_path:wchar_t]` (calls `MoveFileW`, replies 24B `0xA1`) |
+| **`0x09`** | **Rename Remote File or Directory** | `0x0040ECE4` | `0x0043DD10` | `0xA1` (`status=0, 1, 2, 3, 5`) | `[0x09][req_id:u32_le][old_len:u16_le][new_len:u16_le][old_path:wchar_t][new_path:wchar_t]` (calls `0x00440AAC`: `_wrename`/`rename`/`CFile::Rename`, replies 24B `0xA1` with `win32_error=0`; Section 4.2.10) |
 | **`0x0A`** | **Single File Upload Request** | `0x0040E2A7` | `0x0043DF17` | `0xA1` (`status=0..7`) | `[0x0A][flags:u8][req_id:u32_le][file_size:u64_le][dest_path_len:u16_le][dest_path:wchar_t]` (16B header + UTF-16LE path; Section 4.2.4) |
 | **`0x0B`** | **Single File Download Request** | `0x0040DBF4` | `0x0043E4DA` | `0xA1` (`status=9` inline, `7` empty, `1` error); or `0xA1` (`status=0`) then `0xA3` | `[0x0B][req_id:u32_le][src_len:u16_le][src_path:wchar_t][dest_len:u16_le][dest_path:wchar_t]` (9B header/lengths + UTF-16LE paths; Section 4.2.5) |
 | **`0x0C`** | **Upload File Data Chunk** | `0x004450C1` / `0x00443EC9` | `0x00440E41` | None (on success); `0xA5` or `0xA9` (on write error) | `[0x0C][item_id:u32_le][total_chunks:u32_le][chunk_index:u32_le][chunk_len:u32_le][data:bytes]` (Unacknowledged streaming; Section 4.2.6) |
@@ -380,6 +380,35 @@ Offset  Size        Type          Field
   1. **Server Behavior (`0x0043F981`):** For each of the `item_count` records, converts `path` to Windows separators, queries `GetFileAttributesExW` / `GetFileAttributesA`, and if `(attrs != -1)` and `(attrs & 0x07) != 0` (`READONLY | HIDDEN | SYSTEM`), clears those three bits (`and al, 0xf8`) via `SetFileAttributesW` / `SetFileAttributesA`. It then calls `0x0044367D` on `0x7adce0` to register the item and returns immediately **without sending `0xA1` or any other reply**.
   2. **Client Behavior (`0x004395F6`):** `EasySuite.exe` transmits `0x12` via `0x0040E628` and immediately proceeds to `0x00445474` to stream `0x0C` file data chunks without awaiting a reply. Clean-room clients **must not** block waiting for `0xA1` after sending `0x12`.
 
+#### 4.2.10 `0x09` — Rename Remote File or Directory (`0x0040ECE4` / `0x0043DD10`)
+Renames or moves a file or directory on the remote peer:
+
+```text
+Offset  Size        Type          Field
++0x00   1           uint8         opcode = 0x09
++0x01   4           uint32_le     req_id (Client transaction sequence identifier)
++0x05   2           uint16_le     old_len (O, byte count of UTF-16LE old_path: 2 * wchar count)
++0x07   2           uint16_le     new_len (N, byte count of UTF-16LE new_path: 2 * wchar count)
++0x09   O           wchar_t       old_path (Full source path, UTF-16LE encoded)
++0x09+O N           wchar_t       new_path (Full destination path, UTF-16LE encoded)
+```
+
+- **Server Behavior (`0x0043DD10` -> `0x00440AAC`):**
+  1. Unpacks `req_id`, `old_len`, `new_len`, `old_path`, and `new_path` (byte-swapping integers and UTF-16 characters when `[0x00480000] == 0x10`).
+  2. If the peer transfer-lock/error flag `[0x004800C4] != 0`, skips the rename and immediately replies with `0xA1` (`req_opcode = 0x09`, `status = 5`, `req_id`, `win32_error = 0`).
+  3. Otherwise invokes helper `0x00440AAC`:
+     - **Unicode mode (`[0x0047FFFC] == 6` or `7`):**
+       1. Calls `GetFileAttributesExW(old_path)`. If it fails (`0`), sets `status = 3` (source path not found / inaccessible).
+       2. Calls `GetFileAttributesExW(new_path)`. If it succeeds (non-zero), sets `status = 2` (destination already exists).
+       3. Otherwise calls `MSVCRT.dll!_wrename(old_path, new_path)`: sets `status = 0` on success (`0`), or `status = 1` on failure (non-zero).
+     - **ANSI mode:** Checks `old_path` (`status = 3` if missing) and `new_path` (`status = 2` if existing) via `CFileFind` (`0x004480F2`), then calls `MSVCRT.dll!rename` for directories (`GetFileAttributesA(old_path) == 0x10`) or `CFile::Rename` (`0x00448578`) for files (`status = 0` on success, `1` on failure/exception).
+  4. Returns standard 24-byte Server Reply **`0xA1`** (`req_opcode = 0x09`, `req_id` echoed, **`win32_error = 0`** in all cases):
+     - `status = 0`: Rename succeeded.
+     - `status = 1`: Rename failed (`_wrename` / `rename` / `CFile::Rename` error).
+     - `status = 2`: Destination path already exists.
+     - `status = 3`: Source path not found or inaccessible.
+     - `status = 5`: Peer busy / error flag (`[0x004800C4] != 0`).
+
 ---
 
 ## 5. Complete Server Reply Catalog (`0xA1..0xAC`)
@@ -390,7 +419,7 @@ Server Replies are sent by `0x0043FD2D..0x00441DA8` in response to Client Comman
 
 | Opcode | Name | Server Sender VA | Client Handler VA | Payload Format (after `opcode` byte at `+0x00`) |
 | :---: | :--- | :--- | :--- | :--- |
-| **`0xA1`** | **Command Status / ACK / Inline Data** | `0x0043FD2D` | `0x0040BA96` | `[0xA1][req_opcode:u8][status:u8][req_id:u32_le][win32_error:u32_le][reserved:13B][optional_data:bytes]`:<br/>- Standard 24-byte ACK (`status = 0` success, `1` error, `2` conflict, `6` disk full, `7` empty file).<br/>- Small File Inline Delivery (`status = 9`, `file_size <= 64,512` bytes): 24-byte header followed by raw file payload starting at offset `+0x18`, total packet size `24 + file_size` (Section 4.2.5). |
+| **`0xA1`** | **Command Status / ACK / Inline Data** | `0x0043FD2D` | `0x0040BA96` | `[0xA1][req_opcode:u8][status:u8][req_id:u32_le][win32_error:u32_le][reserved:13B][optional_data:bytes]`:<br/>- Standard 24-byte ACK (`status = 0` success, `1` error, `2` conflict / destination exists, `3` source/path not found or error, `5` peer error / rejected, `6` disk full, `7` empty file).<br/>- Small File Inline Delivery (`status = 9`, `file_size <= 64,512` bytes): 24-byte header followed by raw file payload starting at offset `+0x18`, total packet size `24 + file_size` (Section 4.2.5). |
 | **`0xA2`** | **Directory Listing Reply** | `0x00440C2D` | `0x0040C251` | `[0xA2][entry_count:u16_le][entries: Entry552[entry_count]]` (`3 + 552 * entry_count` bytes; see Section 6) |
 | **`0xA3`** | **File Download Data Chunk** | `0x004450C1` | `0x0040CF68` | `[0xA3][item_id:u32_le][total_chunks:u32_le][chunk_index:u32_le][data_len:u32_le][file_data:bytes]` (Streaming chunks for files > 64,512 bytes via `0x0B` or batch downloads via `0x10`) |
 | **`0xA4`** | **Remote Logical Drives List Reply** | `0x00440FDC` | `0x0040F093` | `[0xA4][drive_count:u16_le][records: (drive_letter:char, drive_type:u8)...]` (plus `[len1:u16][display_name:wchar_t[]][len2:u16][root_path:wchar_t[]]` per record when `drive_type` sets `0x10`/`0x20` mode; Section 5.2) |

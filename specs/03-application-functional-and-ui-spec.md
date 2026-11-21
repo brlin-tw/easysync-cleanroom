@@ -164,7 +164,7 @@ Extracted from `EasySuite.packed.exe` resource directory (Language `0x0409` Engl
 3. **Create Remote Directory (`0x07`):**
    + Transmit `[0x07][req_id:u32_le][path_len:u16_le][dir_path:wchar_t]`. Server calls `CreateDirectoryW` and replies with 24-byte `0xA1`.
 4. **Rename Remote File or Directory (`0x09`):**
-   + Transmit `[0x09][req_id:u32_le][old_len:u16_le][new_len:u16_le][old_path:wchar_t][new_path:wchar_t]`. Server calls `MoveFileW` and replies with 24-byte `0xA1`.
+   + Transmit `[0x09][req_id:u32_le][old_len:u16_le][new_len:u16_le][old_path:wchar_t][new_path:wchar_t]`. Server helper `0x00440AAC` checks source/destination existence and calls `_wrename` / `rename` / `CFile::Rename`, replying with 24-byte `0xA1` (`status = 0` success, `1` error, `2` destination exists, `3` source not found, `5` peer error; `win32_error = 0`).
 
 ---
 
